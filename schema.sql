@@ -1,11 +1,11 @@
 -- Dọn dẹp Database cũ nếu có
 DROP TRIGGER IF EXISTS on_auth_user_created_edu ON auth.users;
-DROP FUNCTION IF EXISTS public.handle_new_user();
-DROP TABLE IF EXISTS public.edu_responses;
-DROP TABLE IF EXISTS public.edu_questions;
-DROP TABLE IF EXISTS public.edu_slides;
-DROP TABLE IF EXISTS public.edu_sessions;
-DROP TABLE IF EXISTS public.edu_profiles;
+DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
+DROP TABLE IF EXISTS public.edu_responses CASCADE;
+DROP TABLE IF EXISTS public.edu_questions CASCADE;
+DROP TABLE IF EXISTS public.edu_slides CASCADE;
+DROP TABLE IF EXISTS public.edu_sessions CASCADE;
+DROP TABLE IF EXISTS public.edu_profiles CASCADE;
 
 -- 1. Bảng Profile người dùng (Giáo viên & Admin)
 CREATE TABLE public.edu_profiles (
