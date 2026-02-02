@@ -27,7 +27,20 @@ const App: React.FC = () => {
       }
     }
 
-    // 2. Check for Supabase Auth session
+    // 3. Load sessions
+    const loadSessions = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setSessions([]);
+        return;
+      }
+      const profile = await dataService.getUserProfile(session.user.id);
+      const isAdmin = profile?.role === 'ADMIN';
+      const data = await dataService.getSessions(isAdmin);
+      setSessions(data);
+    };
+
+    // Initial load
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
         const profile = await dataService.getUserProfile(session.user.id);
@@ -39,6 +52,7 @@ const App: React.FC = () => {
           role: role
         };
         setUser(userObj);
+        loadSessions(); // Load sessions after user is confirmed
         setView(role === 'ADMIN' ? 'ADMIN_DASHBOARD' : 'DASHBOARD');
       }
     });
@@ -54,29 +68,21 @@ const App: React.FC = () => {
           role: role
         };
         setUser(userObj);
+        loadSessions(); // Load sessions on auth change
         setView(role === 'ADMIN' ? 'ADMIN_DASHBOARD' : 'DASHBOARD');
       } else {
         // Only clear if it was a teacher or admin (students stay in guest mode)
         setUser(prev => (prev?.role === 'TEACHER' || prev?.role === 'ADMIN') ? null : prev);
+        setSessions([]); // Clear sessions on logout
         setView(prev => prev === 'STUDENT' ? 'STUDENT' : 'LOGIN');
       }
     });
 
-    // 3. Load sessions
-    const loadSessions = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      let isAdmin = false;
-      if (session) {
-        const profile = await dataService.getUserProfile(session.user.id);
-        isAdmin = profile?.role === 'ADMIN';
-      }
-      const data = await dataService.getSessions(isAdmin);
-      setSessions(data);
-    };
-    loadSessions();
-
     const channel = supabase.channel('public:edu_sessions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'edu_sessions' }, () => {
+        loadSessions();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'edu_sessions' }, () => {
         loadSessions();
       })
       .subscribe();
