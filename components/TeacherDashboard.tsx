@@ -626,12 +626,13 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                       roomCode: editingSession.roomCode
                     });
 
-                    // 2. Batch update slides (mostly for questions)
-                    const slideUpdates = editingSession.slides.map(s =>
+                    // 2. Batch update slides (mostly for questions and ORDER)
+                    const slideUpdates = editingSession.slides.map((s, index) =>
                       dataService.updateSlide(s.id, {
                         questions: s.questions,
                         title: s.title,
-                        content: s.content
+                        content: s.content,
+                        order_index: index // PERSIST ORDER
                       })
                     );
                     await Promise.all(slideUpdates);

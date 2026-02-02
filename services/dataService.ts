@@ -52,7 +52,7 @@ export const dataService = {
                 pdfSource: sl.pdf_source,
                 pdfPage: sl.pdf_page,
                 questions: sl.questions || []
-            })).sort((a: any, b: any) => a.order_index - b.order_index),
+            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title)),
             responses: []
         }));
     },
@@ -275,8 +275,9 @@ export const dataService = {
                 imageUrl: s.image_url,
                 pdfSource: s.pdf_source,
                 pdfPage: s.pdf_page,
-                questions: s.questions || []
-            })).sort((a: any, b: any) => a.order_index - b.order_index)
+                questions: s.questions || [],
+                order_index: s.order_index
+            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title))
         } as Session;
     },
 

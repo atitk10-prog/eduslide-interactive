@@ -2,9 +2,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { supabase } from '../services/supabase';
+import PDFSlideRenderer from './PDFSlideRenderer';
 
 interface StudentViewProps { user: User; }
 
@@ -145,14 +146,36 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           setIsQuestionActive(isActive);
 
           if (isActive) {
-            // Find question duration from session data if possible
             const q = sessionData.slides[newData.current_slide_index]?.questions.find((q: any) => q.id === newData.active_question_id);
-            if (q) setTimeLeft(q.duration || 30);
+            if (q) {
+              setTimeLeft(q.duration || 30);
+            } else {
+              setTimeLeft(30);
+            }
           }
         }
 
         if (newData.is_active === false && sessionData.isActive === true) {
           // Might indicate session end or question stop
+        }
+      })
+      .on('broadcast', { event: 'sync' }, (payload) => {
+        const { type, data } = payload.payload;
+        console.log("Realtime Broadcast Received:", type, data);
+        if (type === 'slide:change') {
+          setCurrentSlideIndex(data.slideIndex);
+          setIsQuestionActive(false);
+          setIsTimeout(false);
+          setIsPresentationStarted(true);
+        } else if (type === 'presentation:start') {
+          setIsPresentationStarted(true);
+        } else if (type === 'session:start') {
+          setSessionData(data);
+          setCurrentSlideIndex(data.currentSlideIndex || 0);
+          setIsPresentationStarted(data.isStarted);
+        } else if (type === 'question:state') {
+          setIsQuestionActive(data.isActive);
+          if (!data.isActive && data.isTimeout) setIsTimeout(true);
         }
       })
       .subscribe();
@@ -392,6 +415,26 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
                 <p className="text-green-600 text-sm font-medium italic">Vui lòng chờ slide tiếp theo từ giáo viên.</p>
               </div>
             )}
+          </div>
+        ) : isPresentationStarted && currentSlide ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-6 animate-in fade-in duration-500">
+            <div className="flex-1 w-full flex items-center justify-center relative bg-black/5 rounded-3xl overflow-hidden shadow-inner p-4 min-h-[300px]">
+              {currentSlide.pdfSource ? (
+                <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
+              ) : currentSlide.imageUrl ? (
+                <img src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-xl shadow-lg" alt="Slide" />
+              ) : (
+                <div className="text-slate-300 flex flex-col items-center gap-2">
+                  <LucideImage className="w-12 h-12" />
+                  <span className="font-bold">Đang tải slide...</span>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-indigo-50 border-2 border-indigo-100 p-6 rounded-[2rem] w-full max-w-md text-center">
+              <p className="text-indigo-600 font-black text-lg">Lớp học đang diễn ra</p>
+              <p className="text-indigo-400 text-sm font-medium italic">Hãy theo dõi màn hình chính và trả lời khi có câu hỏi xuất hiện.</p>
+            </div>
           </div>
         ) : !isPresentationStarted ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center max-w-xs space-y-8 py-20 animate-in fade-in zoom-in-95">

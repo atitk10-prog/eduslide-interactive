@@ -25,6 +25,7 @@ export interface Slide {
   pdfSource?: string;
   pdfPage?: number;
   questions: Question[];
+  order_index?: number;
 }
 
 export interface Session {
