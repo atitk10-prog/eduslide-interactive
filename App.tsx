@@ -10,49 +10,9 @@ import { LucideLayout, LucideLogOut, LucideSettings, LucideMonitor } from 'lucid
 import { dataService } from './services/dataService';
 import { supabase } from './services/supabase';
 
-const INITIAL_SESSIONS: Session[] = [
-  {
-    id: 'sess-1',
-    roomCode: 'BIO9',
-    title: 'Giới thiệu về Hệ Sinh Thái - Sinh Học 9',
-    currentSlideIndex: 0,
-    isActive: true,
-    responses: [],
-    // Added missing activeQuestionId to satisfy Session interface
-    activeQuestionId: null,
-    slides: [
-      {
-        id: 's1',
-        title: 'Khái niệm Hệ Sinh Thái',
-        content: 'Hệ sinh thái bao gồm quần xã sinh vật và môi trường sống của chúng.',
-        imageUrl: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&q=80&w=1000',
-        questions: []
-      },
-      {
-        id: 's2',
-        title: 'Thành phần cấu trúc',
-        content: 'Hãy chọn đáp án đúng nhất về cấu trúc hệ sinh thái.',
-        imageUrl: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&q=80&w=1000',
-        questions: [
-          {
-            id: 'q1',
-            slideIndex: 1,
-            type: QuestionType.MULTIPLE_CHOICE,
-            prompt: 'Thành phần vô sinh của hệ sinh thái gồm?',
-            options: ['Ánh sáng, nhiệt độ', 'Cây xanh', 'Vi sinh vật', 'Động vật'],
-            correctAnswer: 'Ánh sáng, nhiệt độ',
-            // Added missing duration property to satisfy Question interface
-            duration: 30
-          }
-        ]
-      }
-    ]
-  }
-];
-
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [sessions, setSessions] = useState<Session[]>(INITIAL_SESSIONS);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD' | 'PRESENTATION' | 'STUDENT' | 'ADMIN_DASHBOARD'>('LOGIN');
 
