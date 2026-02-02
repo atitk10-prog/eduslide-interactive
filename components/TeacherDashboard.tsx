@@ -6,8 +6,8 @@ import { pdfjs } from 'react-pdf';
 import PDFSlideRenderer from './PDFSlideRenderer';
 import { dataService } from '../services/dataService';
 
-const COMPRESSION_TARGET_KB = 500;
-const MAX_IMAGE_DIMENSION = 1920; // 1080p width/height max for slides
+const MAX_IMAGE_DIMENSION = 1920;
+const MAX_FILE_SIZE_MB = 10;
 
 // Configure worker for TeacherDashboard
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -78,19 +78,11 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
 
-        let quality = 0.8;
-        const attemptCompression = () => {
-          canvas.toBlob((blob) => {
-            if (!blob) return reject(new Error('Compression failed'));
-            if (blob.size / 1024 > COMPRESSION_TARGET_KB && quality > 0.1) {
-              quality -= 0.1;
-              attemptCompression();
-            } else {
-              resolve(blob);
-            }
-          }, 'image/jpeg', quality);
-        };
-        attemptCompression();
+        // Constant quality for faster processing
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('Compression failed'));
+          resolve(blob);
+        }, 'image/jpeg', 0.8);
       };
       img.onerror = () => reject(new Error('Image failed to load'));
     });
@@ -168,6 +160,13 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
         const imageFiles = files.filter(f => f.type.startsWith('image/'));
         if (imageFiles.length === 0) return;
 
+        // Check if any file is too large (> 10MB)
+        const oversized = imageFiles.find(f => f.size > MAX_FILE_SIZE_MB * 1024 * 1024);
+        if (oversized) {
+          alert(`File "${oversized.name}" quá lớn (${(oversized.size / 1024 / 1024).toFixed(1)}MB). Vui lòng chọn file dưới ${MAX_FILE_SIZE_MB}MB.`);
+          return;
+        }
+
         let roomCode = Math.random().toString(36).substr(2, 4).toUpperCase();
         let isUnique = await dataService.isRoomCodeUnique(roomCode);
         while (!isUnique) {
@@ -178,10 +177,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
         setUploadProgress(10);
         let completed = 0;
 
-        const slides: Slide[] = [];
+        const slideSlots: (Slide | null)[] = new Array(imageFiles.length).fill(null);
         let totalSize = 0;
 
-        // Process in parallel for speed
+        // Process in parallel
         await Promise.all(imageFiles.map(async (file, i) => {
           try {
             const compressedBlob = await compressImage(file);
@@ -189,13 +188,13 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
 
             const publicUrl = await dataService.uploadPDF(compressedFile);
             if (publicUrl) {
-              slides.push({
+              slideSlots[i] = {
                 id: crypto.randomUUID(),
                 title: `Slide ${i + 1}`,
                 content: '',
                 imageUrl: publicUrl,
                 questions: []
-              });
+              };
               totalSize += compressedFile.size;
             }
           } catch (err) {
@@ -206,12 +205,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           }
         }));
 
-        // Sort slides back to original order since push() in parallel might be out of order
-        slides.sort((a, b) => {
-          const aNum = parseInt(a.title.split(' ')[1]);
-          const bNum = parseInt(b.title.split(' ')[1]);
-          return aNum - bNum;
-        });
+        const slides = slideSlots.filter((s): s is Slide => s !== null);
 
         if (slides.length > 0) {
           const newSession: Session = {
