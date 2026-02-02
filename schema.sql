@@ -25,6 +25,8 @@ CREATE TABLE public.edu_sessions (
   is_active BOOLEAN DEFAULT false,
   active_question_id TEXT,
   storage_size BIGINT DEFAULT 0, -- Dung lượng bài giảng tính bằng bytes
+  score_mode TEXT DEFAULT 'CUMULATIVE', -- 'CUMULATIVE' hoặc 'SINGLE'
+  auto_leaderboard BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -51,13 +53,16 @@ CREATE TABLE public.edu_responses (
   student_class TEXT, -- Thêm thông tin lớp học
   question_id TEXT NOT NULL,
   answer JSONB NOT NULL,
+  is_manual_correct BOOLEAN DEFAULT NULL, -- NULL: chưa chấm, true: đúng, false: sai
   timestamp BIGINT NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- Kích hoạt Real-time cho các bảng cần thiết
+-- Kích hoạt Real-time cho toàn bộ các bảng
 ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_responses;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_slides;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_profiles;
 
 -- Hàm tự động tạo Profile khi có User mới đăng ký qua Auth
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -77,20 +82,27 @@ CREATE TRIGGER on_auth_user_created_edu
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- Phân quyền RLS (Row Level Security) - Tạm thời cho phép mọi người đọc ghi 
--- để dễ phát triển, sau này nên siết chặt lại.
+-- Phân quyền RLS (Row Level Security)
 ALTER TABLE public.edu_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edu_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edu_slides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edu_responses ENABLE ROW LEVEL SECURITY;
 
+-- Chính sách truy cập công khai
 CREATE POLICY "Public profiles are viewable by everyone." ON public.edu_profiles FOR SELECT USING (true);
 CREATE POLICY "Public sessions are viewable by everyone." ON public.edu_sessions FOR SELECT USING (true);
 CREATE POLICY "Public slides are viewable by everyone." ON public.edu_slides FOR SELECT USING (true);
 CREATE POLICY "Public responses are viewable by everyone." ON public.edu_responses FOR SELECT USING (true);
 
--- Cho phép chèn dữ liệu
+-- Cho phép học sinh gửi câu trả lời
 CREATE POLICY "Anyone can insert responses." ON public.edu_responses FOR INSERT WITH CHECK (true);
+
+-- Giáo viên quản lý Session của mình
 CREATE POLICY "Teachers can manage their sessions." ON public.edu_sessions FOR ALL USING (true);
 CREATE POLICY "Teachers can manage their slides." ON public.edu_slides FOR ALL USING (true);
+
+-- Giáo viên chấm điểm (UPDATE) phản hồi của học sinh
+CREATE POLICY "Teachers can update responses for grading." ON public.edu_responses FOR UPDATE USING (true);
+
+-- Quản trị viên quản lý Profile
 CREATE POLICY "Admins can manage profiles." ON public.edu_profiles FOR ALL USING (true);
