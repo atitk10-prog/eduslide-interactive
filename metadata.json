@@ -1,0 +1,5 @@
+{
+  "name": "EduSlide Interactive",
+  "description": "A professional real-time interactive slide presentation platform for schools. Features synchronized slide control, interactive live polling (MCQ, True/False, Short Answer), and teacher-student real-time dashboards.",
+  "requestFramePermissions": []
+}
