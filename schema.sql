@@ -132,3 +132,20 @@ CREATE POLICY "Teachers can manage their sessions." ON public.edu_sessions FOR A
 CREATE POLICY "Teachers can manage their slides." ON public.edu_slides FOR ALL USING (true);
 CREATE POLICY "Teachers can update responses for grading." ON public.edu_responses FOR UPDATE USING (true);
 CREATE POLICY "Admins can manage profiles." ON public.edu_profiles FOR ALL USING (true);
+
+-- 6. ĐỒNG BỘ DỮ LIỆU CŨ (Nếu bạn đã có user trong Auth trước khi tạo Trigger)
+-- Chạy đoạn này để cập nhật toàn bộ user hiện có vào bảng Profiles
+INSERT INTO public.edu_profiles (id, full_name, role, provider)
+SELECT 
+  id, 
+  COALESCE(raw_user_meta_data->>'full_name', 'Người dùng cũ'),
+  CASE 
+    WHEN email = 'at.it.k10@gmail.com' THEN 'ADMIN'
+    ELSE COALESCE(raw_user_meta_data->>'role', 'TEACHER')
+  END,
+  COALESCE(raw_app_meta_data->>'provider', 'email')
+FROM auth.users
+ON CONFLICT (id) DO UPDATE SET
+  role = EXCLUDED.role,
+  full_name = EXCLUDED.full_name;
+

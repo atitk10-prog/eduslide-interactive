@@ -309,7 +309,7 @@ export const dataService = {
             .from('edu_profiles')
             .select('full_name, role')
             .eq('id', userId)
-            .single();
+            .maybeSingle();
 
         if (error) return null;
         return data;
