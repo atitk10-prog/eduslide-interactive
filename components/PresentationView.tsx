@@ -33,6 +33,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [questionStartTime, setQuestionStartTime] = useState<number | null>(null);
   const [isPresentationStarted, setIsPresentationStarted] = useState(initialSession.isActive);
   const [joinedStudents, setJoinedStudents] = useState<any[]>([]);
+  const [isAnswerRevealed, setIsAnswerRevealed] = useState(false);
   const timerRef = useRef<number | null>(null);
 
   const currentSlide = session.slides[currentSlideIndex];
@@ -139,12 +140,9 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             setIsQuestionActive(false);
             socket.emit('question:state', { isActive: false, questionId: null, isTimeout: true });
 
-            if (autoShowLeaderboard) {
-              setShowLeaderboard(true);
-              socket.emit('leaderboard:show', { leaderboard: calculateLeaderboard() });
-            } else {
-              setShowStats(true);
-            }
+            // Always show stats first, don't jump to leaderboard
+            setShowStats(true);
+            setIsAnswerRevealed(false);
             return 0;
           }
           return prev - 1;
@@ -163,7 +161,23 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setQuestionStartTime(null);
       socket.emit('question:state', { isActive: false, questionId: null });
       dataService.updateSession(session.id, { activeQuestionId: null });
+      setShowStats(true);
+      setIsAnswerRevealed(false);
     }
+  };
+
+  const revealAnswer = () => {
+    if (!activeQuestion) return;
+    setIsAnswerRevealed(true);
+
+    // Calculate current scores to send to students
+    const leaderboard = calculateLeaderboard();
+
+    socket.emit('question:reveal', {
+      questionId: activeQuestion.id,
+      correctAnswer: activeQuestion.correctAnswer,
+      leaderboard
+    });
   };
 
   const changeSlide = useCallback((newIndex: number) => {
@@ -175,6 +189,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       socket.emit('question:state', { isActive: false, questionId: null });
       dataService.updateSession(session.id, { currentSlideIndex: newIndex, activeQuestionId: null });
       setShowStats(false);
+      setIsAnswerRevealed(false);
     }
   }, [session.slides.length, session.id]);
 
@@ -280,6 +295,29 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           <img key={currentSlide.id} src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-lg shadow-2xl" />
         )}
 
+        {/* Real-time Response Tracker (Sidebar) */}
+        {isQuestionActive && (
+          <div className="absolute top-40 right-10 w-64 bg-slate-900/80 backdrop-blur-md rounded-[2rem] border border-white/10 p-6 shadow-2xl animate-in slide-in-from-right-5 duration-500 z-20">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trạng thái ( {responses.filter(r => r.questionId === activeQuestion?.id).length} / {joinedStudents.length} )</h4>
+            </div>
+            <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
+              {joinedStudents.map((student, idx) => {
+                const hasAnswered = responses.some(r => r.questionId === activeQuestion?.id && r.studentName === student.name);
+                return (
+                  <div key={idx} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${hasAnswered ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/5 opacity-50'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full ${hasAnswered ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-slate-600'}`} />
+                      <span className={`text-[11px] font-bold ${hasAnswered ? 'text-green-400' : 'text-slate-400'}`}>{student.name}</span>
+                    </div>
+                    {hasAnswered && <LucideCheckCircle2 className="w-3 h-3 text-green-500" />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {isQuestionActive && (
           <>
             <div className="absolute top-10 right-10 flex flex-col items-end gap-4 z-20">
@@ -329,7 +367,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                   <Tooltip cursor={{ fill: '#f1f5f9' }} contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
                   <Bar dataKey="count" radius={[10, 10, 0, 0]}>
                     {statsData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.isCorrect ? '#10b981' : '#6366f1'} />
+                      <Cell key={`cell-${index}`} fill={isAnswerRevealed ? (entry.isCorrect ? '#10b981' : '#ef4444') : '#6366f1'} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -368,13 +406,23 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                 </span>
                 <span className="text-xs font-bold text-green-400 uppercase tracking-widest">Đúng</span>
               </div>
-              <button
-                onClick={() => setShowLeaderboard(true)}
-                className="bg-slate-900 text-white p-6 rounded-3xl text-center hover:scale-105 transition-transform"
-              >
-                <LucideTrophy className="w-8 h-8 mx-auto mb-1 text-yellow-400" />
-                <span className="text-xs font-bold uppercase tracking-widest">Bảng xếp hạng</span>
-              </button>
+              {!isAnswerRevealed ? (
+                <button
+                  onClick={revealAnswer}
+                  className="bg-green-600 text-white p-6 rounded-3xl text-center hover:scale-105 transition-transform shadow-xl border-4 border-white/20"
+                >
+                  <LucideCheckCircle2 className="w-8 h-8 mx-auto mb-1" />
+                  <span className="text-xs font-black uppercase tracking-widest">HIỆN ĐÁP ÁN</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowLeaderboard(true)}
+                  className="bg-slate-900 text-white p-6 rounded-3xl text-center hover:scale-105 transition-transform"
+                >
+                  <LucideTrophy className="w-8 h-8 mx-auto mb-1 text-yellow-400" />
+                  <span className="text-xs font-bold uppercase tracking-widest">Bảng xếp hạng</span>
+                </button>
+              )}
             </div>
             <button
               onClick={() => {
@@ -595,7 +643,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           <button onClick={() => setShowStats(!showStats)} className="flex items-center gap-3 h-16 bg-white/5 text-white px-10 rounded-2xl font-black text-lg hover:bg-white/10 transition-all"><LucideChartBar /> XEM KẾT QUẢ</button>
         </div>
       </div>
-    </div>
+    </div >
   );
 };
 

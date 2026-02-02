@@ -25,6 +25,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [sessionEnded, setSessionEnded] = useState(false);
   const [showFireworks, setShowFireworks] = useState(false);
   const [isPresentationStarted, setIsPresentationStarted] = useState(false);
+  const [revealData, setRevealData] = useState<any>(null);
   const timerRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -40,11 +41,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setCurrentSlideIndex(data.slideIndex);
       setIsQuestionActive(false);
       setIsTimeout(false);
+      setRevealData(null);
     };
 
     const handleQuestionState = (data: any) => {
       setIsQuestionActive(data.isActive);
       if (data.isActive) {
+        setRevealData(null);
         setIsTimeout(false);
         setTimeLeft(data.duration || 0);
         setTf4Values({}); // Reset values when new question opens
@@ -92,6 +95,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setTimeout(() => setShowFireworks(false), 3000);
     };
 
+    const handleQuestionReveal = (data: any) => {
+      setRevealData(data);
+    };
+
     const handlePresentationStart = () => {
       setIsPresentationStarted(true);
     };
@@ -104,6 +111,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     socket.on('leaderboard:hide', handleLeaderboardHide);
     socket.on('session:end', handleSessionEnd);
     socket.on('feedback:correct', handleFeedbackCorrect);
+    socket.on('question:reveal', handleQuestionReveal);
 
     return () => {
       socket.off('slide:change', handleSlideChange);
@@ -114,6 +122,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.off('leaderboard:hide', handleLeaderboardHide);
       socket.off('session:end', handleSessionEnd);
       socket.off('feedback:correct', handleFeedbackCorrect);
+      socket.off('question:reveal', handleQuestionReveal);
       socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -406,13 +415,40 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
               )}
             </div>
 
-            {submittedAnswers[question.id] && (
+            {submittedAnswers[question.id] && !revealData && (
               <div className="text-center p-8 bg-green-50 rounded-[2.5rem] border border-green-100 flex flex-col items-center gap-3 animate-in fade-in zoom-in-95">
                 <div className="bg-green-500 text-white p-3 rounded-full shadow-lg shadow-green-200">
                   <LucideCheckCircle2 className="w-8 h-8" />
                 </div>
                 <p className="text-green-800 font-black text-lg">Đã ghi nhận câu trả lời!</p>
                 <p className="text-green-600 text-sm font-medium italic">Vui lòng chờ slide tiếp theo từ giáo viên.</p>
+              </div>
+            )}
+
+            {revealData && question.id === revealData.questionId && (
+              <div className="animate-in zoom-in-95 duration-500">
+                {JSON.stringify(submittedAnswers[question.id]) === JSON.stringify(revealData.correctAnswer) ? (
+                  <div className="bg-green-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <LucideTrophy className="w-20 h-20 mx-auto mb-4 animate-bounce" />
+                    <h2 className="text-4xl font-black mb-2">CHÍNH XÁC!</h2>
+                    <p className="text-xl font-bold opacity-80 mb-6">Bạn thật xuất sắc</p>
+                    <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
+                      <span className="text-xs font-black uppercase tracking-widest block opacity-70">Điểm hiện tại</span>
+                      <span className="text-3xl font-black">{revealData.leaderboard.find((s: any) => s.name === user.name)?.score || 0}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-red-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <LucideX className="w-20 h-20 mx-auto mb-4 animate-pulse" />
+                    <h2 className="text-4xl font-black mb-2">CHƯA ĐÚNG!</h2>
+                    <p className="text-xl font-bold opacity-80 mb-6">Đừng nản chí nhé</p>
+                    <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
+                      <span className="text-xs font-black uppercase tracking-widest block opacity-70">Đáp án: {Array.isArray(revealData.correctAnswer) ? revealData.correctAnswer.join(', ') : JSON.stringify(revealData.correctAnswer).replace(/[\[\]"]/g, '')}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
