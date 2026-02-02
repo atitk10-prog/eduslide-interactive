@@ -1,22 +1,13 @@
--- Dọn dẹp Database cũ nếu có
-DROP TRIGGER IF EXISTS on_auth_user_created_edu ON auth.users;
-DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
-DROP TABLE IF EXISTS public.edu_responses CASCADE;
-DROP TABLE IF EXISTS public.edu_questions CASCADE;
-DROP TABLE IF EXISTS public.edu_slides CASCADE;
-DROP TABLE IF EXISTS public.edu_sessions CASCADE;
-DROP TABLE IF EXISTS public.edu_profiles CASCADE;
-
--- 1. Bảng Profile người dùng (Giáo viên & Admin)
-CREATE TABLE public.edu_profiles (
+-- 1. Đảm bảo các bảng cơ bản tồn tại (Không xóa dữ liệu cũ)
+CREATE TABLE IF NOT EXISTS public.edu_profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
   full_name TEXT,
   role TEXT DEFAULT 'TEACHER', -- 'ADMIN', 'TEACHER'
+  provider TEXT DEFAULT 'email', -- 'email', 'google'
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 2. Bảng Session (Buổi học/Bài giảng)
-CREATE TABLE public.edu_sessions (
+CREATE TABLE IF NOT EXISTS public.edu_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   teacher_id UUID REFERENCES public.edu_profiles(id) ON DELETE CASCADE NOT NULL,
   room_code TEXT UNIQUE NOT NULL,
@@ -31,8 +22,7 @@ CREATE TABLE public.edu_sessions (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 3. Bảng Slides
-CREATE TABLE public.edu_slides (
+CREATE TABLE IF NOT EXISTS public.edu_slides (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID REFERENCES public.edu_sessions(id) ON DELETE CASCADE NOT NULL,
   title TEXT,
@@ -45,8 +35,7 @@ CREATE TABLE public.edu_slides (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 4. Bảng Kết quả trả lời (Real-time)
-CREATE TABLE public.edu_responses (
+CREATE TABLE IF NOT EXISTS public.edu_responses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID REFERENCES public.edu_sessions(id) ON DELETE CASCADE NOT NULL,
   student_name TEXT NOT NULL,
@@ -58,51 +47,88 @@ CREATE TABLE public.edu_responses (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- Kích hoạt Real-time cho toàn bộ các bảng
-ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_sessions;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_responses;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_slides;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_profiles;
+-- 2. CẬP NHẬT CÁC TÍNH NĂNG MỚI (An toàn cho dữ liệu cũ)
+ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS score_mode TEXT DEFAULT 'CUMULATIVE';
+ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS auto_leaderboard BOOLEAN DEFAULT true;
+ALTER TABLE public.edu_responses ADD COLUMN IF NOT EXISTS is_manual_correct BOOLEAN DEFAULT NULL;
+ALTER TABLE public.edu_profiles ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'email';
 
--- Hàm tự động tạo Profile khi có User mới đăng ký qua Auth
+-- 3. Kích hoạt Real-time (Sử dụng khối DO để tránh lỗi nếu đã tồn tại)
+DO $$ 
+BEGIN 
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_sessions;
+    EXCEPTION WHEN others THEN END;
+    
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_responses;
+    EXCEPTION WHEN others THEN END;
+    
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_slides;
+    EXCEPTION WHEN others THEN END;
+    
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_profiles;
+    EXCEPTION WHEN others THEN END;
+END $$;
+
+-- 4. Cập nhật Trigger (Theo dõi provider và gán quyền Admin đặc biệt)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  assigned_role TEXT;
 BEGIN
-  INSERT INTO public.edu_profiles (id, full_name, role)
+  -- Mặc định là TEACHER, trừ email đặc biệt
+  IF (NEW.email = 'at.it.k10@gmail.com') THEN
+    assigned_role := 'ADMIN';
+  ELSE
+    assigned_role := COALESCE(NEW.raw_user_meta_data->>'role', 'TEACHER');
+  END IF;
+
+  INSERT INTO public.edu_profiles (id, full_name, role, provider)
   VALUES (
     NEW.id, 
     COALESCE(NEW.raw_user_meta_data->>'full_name', 'Người dùng mới'),
-    COALESCE(NEW.raw_user_meta_data->>'role', 'TEACHER')
-  );
+    assigned_role,
+    COALESCE(NEW.raw_app_meta_data->>'provider', 'email')
+  ) ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    role = assigned_role,
+    provider = EXCLUDED.provider;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created_edu ON auth.users;
 CREATE TRIGGER on_auth_user_created_edu
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- Phân quyền RLS (Row Level Security)
+-- 5. Phân quyền RLS
 ALTER TABLE public.edu_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edu_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edu_slides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edu_responses ENABLE ROW LEVEL SECURITY;
 
--- Chính sách truy cập công khai
+-- Dọn dẹp Policy cũ (Tránh lỗi trùng lặp khi chạy lại)
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone." ON public.edu_profiles;
+DROP POLICY IF EXISTS "Public sessions are viewable by everyone." ON public.edu_sessions;
+DROP POLICY IF EXISTS "Public slides are viewable by everyone." ON public.edu_slides;
+DROP POLICY IF EXISTS "Public responses are viewable by everyone." ON public.edu_responses;
+DROP POLICY IF EXISTS "Anyone can insert responses." ON public.edu_responses;
+DROP POLICY IF EXISTS "Teachers can manage their sessions." ON public.edu_sessions;
+DROP POLICY IF EXISTS "Teachers can manage their slides." ON public.edu_slides;
+DROP POLICY IF EXISTS "Teachers can update responses for grading." ON public.edu_responses;
+DROP POLICY IF EXISTS "Admins can manage profiles." ON public.edu_profiles;
+
+-- Tạo Policy mới
 CREATE POLICY "Public profiles are viewable by everyone." ON public.edu_profiles FOR SELECT USING (true);
 CREATE POLICY "Public sessions are viewable by everyone." ON public.edu_sessions FOR SELECT USING (true);
 CREATE POLICY "Public slides are viewable by everyone." ON public.edu_slides FOR SELECT USING (true);
 CREATE POLICY "Public responses are viewable by everyone." ON public.edu_responses FOR SELECT USING (true);
-
--- Cho phép học sinh gửi câu trả lời
 CREATE POLICY "Anyone can insert responses." ON public.edu_responses FOR INSERT WITH CHECK (true);
-
--- Giáo viên quản lý Session của mình
 CREATE POLICY "Teachers can manage their sessions." ON public.edu_sessions FOR ALL USING (true);
 CREATE POLICY "Teachers can manage their slides." ON public.edu_slides FOR ALL USING (true);
-
--- Giáo viên chấm điểm (UPDATE) phản hồi của học sinh
 CREATE POLICY "Teachers can update responses for grading." ON public.edu_responses FOR UPDATE USING (true);
-
--- Quản trị viên quản lý Profile
 CREATE POLICY "Admins can manage profiles." ON public.edu_profiles FOR ALL USING (true);

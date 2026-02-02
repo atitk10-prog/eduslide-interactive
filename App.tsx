@@ -6,7 +6,7 @@ import TeacherDashboard from './components/TeacherDashboard';
 import StudentView from './components/StudentView';
 import PresentationView from './components/PresentationView';
 import AdminDashboard from './components/AdminDashboard';
-import { LucideLayout, LucideLogOut } from 'lucide-react';
+import { LucideLayout, LucideLogOut, LucideSettings, LucideMonitor } from 'lucide-react';
 import { dataService } from './services/dataService';
 import { supabase } from './services/supabase';
 
@@ -136,7 +136,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    if (user?.role === 'TEACHER') {
+    if (user?.role === 'TEACHER' || user?.role === 'ADMIN') {
       await supabase.auth.signOut();
     }
     setUser(null);
@@ -178,6 +178,22 @@ const App: React.FC = () => {
 
         {user && (
           <div className="flex items-center gap-4">
+            {user.role === 'ADMIN' && (
+              <div className="flex bg-slate-100 p-1 rounded-xl mr-2">
+                <button
+                  onClick={() => setView('DASHBOARD')}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${view === 'DASHBOARD' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  <LucideMonitor className="w-3.5 h-3.5" /> Giảng dạy
+                </button>
+                <button
+                  onClick={() => setView('ADMIN_DASHBOARD')}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${view === 'ADMIN_DASHBOARD' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  <LucideSettings className="w-3.5 h-3.5" /> Quản trị
+                </button>
+              </div>
+            )}
             <div className="text-right hidden sm:block">
               <p className="text-sm font-bold text-slate-900">{user.name}</p>
               <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">{user.role}</p>
@@ -194,7 +210,7 @@ const App: React.FC = () => {
 
       <main className="flex-1">
         {view === 'LOGIN' && <Login onLogin={handleLogin} />}
-        {view === 'DASHBOARD' && user?.role === 'TEACHER' && (
+        {view === 'DASHBOARD' && (user?.role === 'TEACHER' || user?.role === 'ADMIN') && (
           <TeacherDashboard
             sessions={sessions}
             onStart={startPresentation}

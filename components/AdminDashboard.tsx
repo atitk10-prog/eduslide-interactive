@@ -228,12 +228,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onDeleteSessi
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <p className="font-black text-slate-900">{teacher.full_name}</p>
-                                            <p className="text-xs font-bold text-slate-400">ID: {teacher.id.substring(0, 8)}...</p>
+                                            <p className="text-xs font-bold text-slate-400 flex items-center gap-2">
+                                                ID: {teacher.id.substring(0, 8)}...
+                                                {teacher.provider === 'google' && (
+                                                    <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded text-[8px] font-black uppercase">
+                                                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/smartlock/google.svg" className="w-3 h-3" alt="G" />
+                                                        Google Account
+                                                    </span>
+                                                )}
+                                            </p>
                                         </div>
                                         <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => handleResetPassword(teacher.id + "@edu.vn")} title="Reset mật khẩu về mặc định" className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all">
-                                                <LucideLock className="w-4 h-4" />
-                                            </button>
+                                            {teacher.provider !== 'google' && (
+                                                <button onClick={() => handleResetPassword(teacher.id + "@edu.vn")} title="Reset mật khẩu về mặc định" className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all">
+                                                    <LucideLock className="w-4 h-4" />
+                                                </button>
+                                            )}
                                             <button className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all">
                                                 <LucideTrash2 className="w-4 h-4" />
                                             </button>
