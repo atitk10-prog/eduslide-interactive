@@ -38,6 +38,7 @@ export interface Session {
   activeQuestionId: string | null;
   teacherName?: string;
   storageSize?: number; // bytes
+  scoreMode?: 'CUMULATIVE' | 'SINGLE';
   createdAt?: string;   // ISO date string
 }
 
