@@ -1,3 +1,20 @@
+-- 0. Cấu hình Storage (Bucket & Policies)
+-- Tạo bucket nếu chưa có
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('eduslide-assets', 'eduslide-assets', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Cho phép mọi người xem file trong bucket này
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
+CREATE POLICY "Public Access" ON storage.objects FOR SELECT USING (bucket_id = 'eduslide-assets');
+
+-- Cho phép người dùng đã đăng nhập (Giáo viên/Admin) upload file
+DROP POLICY IF EXISTS "Authenticated users can upload slides" ON storage.objects;
+CREATE POLICY "Authenticated users can upload slides" ON storage.objects FOR INSERT WITH CHECK (
+    bucket_id = 'eduslide-assets' 
+    AND (auth.role() = 'authenticated')
+);
+
 -- 1. Đảm bảo các bảng cơ bản tồn tại (Không xóa dữ liệu cũ)
 CREATE TABLE IF NOT EXISTS public.edu_profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
