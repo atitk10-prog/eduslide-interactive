@@ -118,27 +118,23 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <LucideArrowRight className="w-5 h-5" />
             </button>
 
-            {!isAdmin && (
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-100"></div>
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-4 text-slate-400 font-bold tracking-widest">Hoặc tiếp tục với</span>
-                </div>
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-100"></div>
               </div>
-            )}
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-4 text-slate-400 font-bold tracking-widest">{isAdmin ? 'Hoặc đăng nhập với' : 'Hoặc tiếp tục với'}</span>
+              </div>
+            </div>
 
-            {!isAdmin && (
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                className="w-full bg-white border-2 border-slate-100 text-slate-900 py-4 rounded-2xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-3"
-              >
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/smartlock/google.svg" className="w-5 h-5" alt="Google" />
-                Dùng tài khoản Google
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              className="w-full bg-white border-2 border-slate-100 text-slate-900 py-4 rounded-2xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-3"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/smartlock/google.svg" className="w-5 h-5" alt="Google" />
+              Dùng tài khoản Google
+            </button>
           </form>
 
           {!isAdmin && (
