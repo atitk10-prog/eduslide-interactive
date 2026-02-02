@@ -29,6 +29,8 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
   const [showSettings, setShowSettings] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [replacingSlideId, setReplacingSlideId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const formatRelativeTime = (dateStr?: string) => {
@@ -163,8 +165,8 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           setUploadProgress(100);
         }
       } else {
-        const slides: Slide[] = [];
-        let totalSize = 0;
+        const imageFiles = files.filter(f => f.type.startsWith('image/'));
+        if (imageFiles.length === 0) return;
 
         let roomCode = Math.random().toString(36).substr(2, 4).toUpperCase();
         let isUnique = await dataService.isRoomCodeUnique(roomCode);
@@ -173,33 +175,49 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           isUnique = await dataService.isRoomCodeUnique(roomCode);
         }
 
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          if (!file.type.startsWith('image/')) continue;
+        setUploadProgress(10);
+        let completed = 0;
 
-          setUploadProgress(Math.round(((i) / files.length) * 100));
+        const slides: Slide[] = [];
+        let totalSize = 0;
 
-          const compressedBlob = await compressImage(file);
-          const compressedFile = new File([compressedBlob], file.name, { type: 'image/jpeg' });
-          totalSize += compressedFile.size;
+        // Process in parallel for speed
+        await Promise.all(imageFiles.map(async (file, i) => {
+          try {
+            const compressedBlob = await compressImage(file);
+            const compressedFile = new File([compressedBlob], file.name, { type: 'image/jpeg' });
 
-          const publicUrl = await dataService.uploadPDF(compressedFile);
-          if (publicUrl) {
-            slides.push({
-              id: crypto.randomUUID(),
-              title: `Slide ${i + 1}`,
-              content: '',
-              imageUrl: publicUrl,
-              questions: []
-            });
+            const publicUrl = await dataService.uploadPDF(compressedFile);
+            if (publicUrl) {
+              slides.push({
+                id: crypto.randomUUID(),
+                title: `Slide ${i + 1}`,
+                content: '',
+                imageUrl: publicUrl,
+                questions: []
+              });
+              totalSize += compressedFile.size;
+            }
+          } catch (err) {
+            console.error("Error processing file", i, err);
+          } finally {
+            completed++;
+            setUploadProgress(Math.round(10 + (completed / imageFiles.length) * 80));
           }
-        }
+        }));
+
+        // Sort slides back to original order since push() in parallel might be out of order
+        slides.sort((a, b) => {
+          const aNum = parseInt(a.title.split(' ')[1]);
+          const bNum = parseInt(b.title.split(' ')[1]);
+          return aNum - bNum;
+        });
 
         if (slides.length > 0) {
           const newSession: Session = {
             id: crypto.randomUUID(),
             roomCode: roomCode,
-            title: files.length > 1 ? `Bài giảng mới (${files.length} ảnh)` : files[0].name.replace(/\.[^/.]+$/, ""),
+            title: imageFiles.length > 1 ? `Bài giảng mới (${imageFiles.length} ảnh)` : imageFiles[0].name.replace(/\.[^/.]+$/, ""),
             currentSlideIndex: 0,
             isActive: false,
             responses: [],
@@ -415,27 +433,43 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                           </div>
                         )}
                         <label className="absolute inset-0 bg-black/40 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              const compressed = await compressImage(file);
-                              const cFile = new File([compressed], file.name, { type: 'image/jpeg' });
-                              const url = await dataService.uploadPDF(cFile);
-                              if (url) {
-                                const updatedSlides = [...editingSession.slides];
-                                updatedSlides[idx] = { ...updatedSlides[idx], imageUrl: url, pdfSource: undefined };
-                                setEditingSession({ ...editingSession, slides: updatedSlides });
-                                await dataService.updateSlide(slide.id, { imageUrl: url, pdfSource: null as any });
-                              }
-                            }}
-                          />
-                          <div className="bg-white px-4 py-2 rounded-xl text-xs font-black shadow-xl flex items-center gap-2">
-                            <LucideUpload className="w-4 h-4" /> ĐỔI ẢNH
-                          </div>
+                          {replacingSlideId === slide.id ? (
+                            <div className="bg-white/90 p-3 rounded-2xl flex items-center gap-2">
+                              <LucideLoader2 className="w-5 h-5 animate-spin text-indigo-600" />
+                              <span className="text-[10px] font-black text-indigo-600">ĐANG TẢI...</span>
+                            </div>
+                          ) : (
+                            <>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  setReplacingSlideId(slide.id);
+                                  try {
+                                    const compressed = await compressImage(file);
+                                    const cFile = new File([compressed], file.name, { type: 'image/jpeg' });
+                                    const url = await dataService.uploadPDF(cFile);
+                                    if (url) {
+                                      const updatedSlides = [...editingSession.slides];
+                                      updatedSlides[idx] = { ...updatedSlides[idx], imageUrl: url, pdfSource: undefined };
+                                      setEditingSession({ ...editingSession, slides: updatedSlides });
+                                      await dataService.updateSlide(slide.id, { imageUrl: url, pdfSource: null as any });
+                                    }
+                                  } catch (err) {
+                                    alert("Lỗi khi thay ảnh. Vui lòng thử lại.");
+                                  } finally {
+                                    setReplacingSlideId(null);
+                                  }
+                                }}
+                              />
+                              <div className="bg-white px-4 py-2 rounded-xl text-xs font-black shadow-xl flex items-center gap-2">
+                                <LucideUpload className="w-4 h-4" /> ĐỔI ẢNH
+                              </div>
+                            </>
+                          )}
                         </label>
                       </div>
                       <div className="flex items-center justify-between px-2">
@@ -580,18 +614,46 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
               </div>
             </div>
 
-            <div className="p-6 border-t bg-slate-50/50 flex justify-end">
+            <div className="p-6 border-t bg-slate-50/50 flex justify-end gap-4">
               <button
-                onClick={async () => {
-                  await dataService.updateSession(editingSession.id, {
-                    title: editingSession.title,
-                    roomCode: editingSession.roomCode
-                  });
-                  setEditingSession(null);
-                }}
-                className="px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg"
+                onClick={() => setEditingSession(null)}
+                className="px-6 py-4 bg-slate-200 text-slate-600 rounded-2xl font-black"
               >
-                LƯU CẤU HÌNH
+                HỦY
+              </button>
+              <button
+                disabled={isSaving}
+                onClick={async () => {
+                  setIsSaving(true);
+                  try {
+                    // 1. Update session metadata
+                    await dataService.updateSession(editingSession.id, {
+                      title: editingSession.title,
+                      roomCode: editingSession.roomCode
+                    });
+
+                    // 2. Batch update slides (mostly for questions)
+                    const slideUpdates = editingSession.slides.map(s =>
+                      dataService.updateSlide(s.id, {
+                        questions: s.questions,
+                        title: s.title,
+                        content: s.content
+                      })
+                    );
+                    await Promise.all(slideUpdates);
+
+                    setEditingSession(null);
+                    alert("Đã lưu cấu hình thành công!");
+                  } catch (err) {
+                    console.error("Save error:", err);
+                    alert("Có lỗi xảy ra khi lưu. Vui lòng thử lại.");
+                  } finally {
+                    setIsSaving(false);
+                  }
+                }}
+                className="px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg flex items-center gap-2"
+              >
+                {isSaving ? <LucideLoader2 className="animate-spin" /> : 'LƯU CẤU HÌNH'}
               </button>
             </div>
           </div>

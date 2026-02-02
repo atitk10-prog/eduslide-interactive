@@ -125,8 +125,9 @@ const App: React.FC = () => {
     }
   };
 
-  const startPresentation = (session: Session) => {
-    setCurrentSession(session);
+  const startPresentation = async (session: Session) => {
+    await dataService.updateSession(session.id, { isActive: true });
+    setCurrentSession({ ...session, isActive: true });
     setView('PRESENTATION');
   };
 
