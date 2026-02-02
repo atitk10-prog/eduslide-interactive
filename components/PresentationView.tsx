@@ -31,6 +31,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [autoShowLeaderboard, setAutoShowLeaderboard] = useState(true);
   const [showFinalReport, setShowFinalReport] = useState(false);
   const [questionStartTime, setQuestionStartTime] = useState<number | null>(null);
+  const [isPresentationStarted, setIsPresentationStarted] = useState(initialSession.isActive);
+  const [joinedStudents, setJoinedStudents] = useState<any[]>([]);
   const timerRef = useRef<number | null>(null);
 
   const currentSlide = session.slides[currentSlideIndex];
@@ -160,7 +162,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       stopTimer();
       setQuestionStartTime(null);
       socket.emit('question:state', { isActive: false, questionId: null });
-      dataService.updateSession(session.id, { isActive: false, activeQuestionId: null });
+      dataService.updateSession(session.id, { activeQuestionId: null });
     }
   };
 
@@ -171,29 +173,52 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       stopTimer();
       socket.emit('slide:change', { slideIndex: newIndex });
       socket.emit('question:state', { isActive: false, questionId: null });
-      dataService.updateSession(session.id, { currentSlideIndex: newIndex, isActive: false, activeQuestionId: null });
+      dataService.updateSession(session.id, { currentSlideIndex: newIndex, activeQuestionId: null });
       setShowStats(false);
     }
   }, [session.slides.length, session.id]);
 
   useEffect(() => {
+    socket.joinRoom(session.roomCode);
+
     socket.emit('session:start', {
       roomCode: session.roomCode,
       currentSlideIndex: currentSlideIndex,
       title: session.title,
-      slides: session.slides
+      slides: session.slides,
+      isStarted: isPresentationStarted
     });
 
     const handleAnswer = (data: AnswerResponse) => {
       setResponses(prev => [...prev, data]);
     };
 
+    const handlePresenceSync = (presenceState: any) => {
+      const students: any[] = [];
+      Object.keys(presenceState).forEach(key => {
+        presenceState[key].forEach((presence: any) => {
+          students.push(presence);
+        });
+      });
+      setJoinedStudents(students);
+    };
+
     socket.on('answer:submit', handleAnswer);
+    socket.on('presence:sync', handlePresenceSync);
+
     return () => {
       socket.off('answer:submit', handleAnswer);
+      socket.off('presence:sync', handlePresenceSync);
+      socket.leaveRoom();
       stopTimer();
     };
-  }, [session, currentSlideIndex]);
+  }, [session, currentSlideIndex, isPresentationStarted]);
+
+  const startPresentation = () => {
+    setIsPresentationStarted(true);
+    socket.emit('presentation:start', { roomCode: session.roomCode });
+    dataService.updateSession(session.id, { isActive: true });
+  };
 
   const statsData = useMemo(() => {
     if (!activeQuestion) return [];
@@ -256,15 +281,24 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         )}
 
         {isQuestionActive && (
-          <div className="absolute top-10 right-10 flex flex-col items-end gap-4">
-            <div className="bg-indigo-600 text-white px-8 py-4 rounded-3xl font-black shadow-2xl flex items-center gap-4 border-4 border-white/20 animate-pulse">
-              <LucideClock className="w-8 h-8" />
-              <span className="text-4xl tabular-nums">{timeLeft}s</span>
+          <>
+            <div className="absolute top-10 right-10 flex flex-col items-end gap-4 z-20">
+              <div className="bg-indigo-600 text-white px-8 py-4 rounded-3xl font-black shadow-2xl flex items-center gap-4 border-4 border-white/20 animate-pulse">
+                <LucideClock className="w-8 h-8" />
+                <span className="text-4xl tabular-nums">{timeLeft}s</span>
+              </div>
+              <div className="bg-amber-500 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2">
+                <LucideMessageSquare className="w-4 h-4" /> ĐANG NHẬN CÂU TRẢ LỜI
+              </div>
             </div>
-            <div className="bg-amber-500 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2">
-              <LucideMessageSquare className="w-4 h-4" /> ĐANG NHẬN CÂU TRẢ LỜI
+
+            <div className="absolute bottom-40 left-1/2 -translate-x-1/2 w-full max-w-4xl px-10 z-20">
+              <div className="bg-white/95 backdrop-blur-md p-8 rounded-[2.5rem] shadow-2xl border-4 border-indigo-500 animate-in slide-in-from-bottom-5">
+                <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest mb-4 inline-block">Câu hỏi hiện tại</span>
+                <h3 className="text-3xl font-black text-slate-900 leading-tight">{activeQuestion?.prompt}</h3>
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* Stats Overlay */}
@@ -484,6 +518,54 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Lobby Overlay */}
+        {!isPresentationStarted && (
+          <div className="absolute inset-0 bg-slate-900 z-[60] flex flex-col items-center justify-center p-10 animate-in fade-in duration-500">
+            <div className="text-center mb-12 space-y-4">
+              <div className="bg-indigo-600 text-white inline-block px-10 py-6 rounded-[3rem] shadow-2xl border-4 border-indigo-400 mb-6">
+                <p className="text-xs font-black uppercase tracking-[0.3em] opacity-70 mb-2">Mã phòng học</p>
+                <h2 className="text-8xl font-black tracking-tighter">{session.roomCode}</h2>
+              </div>
+              <h1 className="text-4xl font-black text-white italic">{session.title}</h1>
+              <p className="text-slate-400 font-bold uppercase tracking-widest">Đang chờ học sinh tham gia...</p>
+            </div>
+
+            <div className="w-full max-w-4xl bg-white/5 backdrop-blur-md rounded-[3rem] p-10 border border-white/10">
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-xl font-black text-white flex items-center gap-3">
+                  <LucideUsers className="text-indigo-400" />
+                  DANH SÁCH LỚP ({joinedStudents.length})
+                </h3>
+                <button
+                  onClick={startPresentation}
+                  className="bg-indigo-600 hover:bg-green-600 text-white px-10 py-4 rounded-2xl font-black text-xl transition-all shadow-xl active:scale-95 flex items-center gap-3"
+                >
+                  <LucidePlayCircle /> BẮT ĐẦU BÀI GIẢNG
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-4 max-h-[40vh] overflow-y-auto pr-4 custom-scrollbar">
+                {joinedStudents.map((student, idx) => (
+                  <div key={idx} className="bg-white/10 p-4 rounded-2xl text-center border border-white/5 animate-in zoom-in-50">
+                    <div className="w-12 h-12 bg-indigo-500 rounded-full mx-auto mb-2 flex items-center justify-center text-white font-black text-xl shadow-lg">
+                      {student.name?.[0].toUpperCase()}
+                    </div>
+                    <p className="text-white font-bold text-xs truncate whitespace-nowrap overflow-hidden w-full">{student.name}</p>
+                    <p className="text-indigo-400 font-black text-[8px] uppercase">{student.class}</p>
+                  </div>
+                ))}
+                {joinedStudents.length === 0 && (
+                  <div className="col-span-full py-20 text-center">
+                    <div className="inline-block p-6 bg-white/5 rounded-full animate-pulse mb-4">
+                      <LucideUsers className="w-10 h-10 text-slate-500" />
+                    </div>
+                    <p className="text-slate-500 font-medium italic">Chưa có ai vào phòng...</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

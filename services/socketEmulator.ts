@@ -6,27 +6,59 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 type EventCallback = (data: any) => void;
 
 class SocketEmulator {
-  private channel: BroadcastChannel;
+  private localChannel: BroadcastChannel;
   private supabaseChannel: RealtimeChannel | null = null;
+  private currentRoom: string | null = null;
   private listeners: Map<string, Set<EventCallback>> = new Map();
 
   constructor() {
-    this.channel = new BroadcastChannel('eduslide_sync_channel');
-    this.channel.onmessage = (event) => {
+    this.localChannel = new BroadcastChannel('eduslide_sync_channel');
+    this.localChannel.onmessage = (event) => {
       const { type, data } = event.data;
       this.trigger(type, data);
     };
+  }
 
-    // Initialize Supabase Realtime if credentials exist
+  public joinRoom(roomCode: string) {
+    if (this.currentRoom === roomCode) return;
+
+    this.leaveRoom();
+    this.currentRoom = roomCode;
+
+    // Initialize Supabase Realtime for THIS room
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
-      this.supabaseChannel = supabase.channel('eduslide_room_sync')
+      this.supabaseChannel = supabase.channel(`room_${roomCode}`, {
+        config: {
+          presence: {
+            key: roomCode,
+          },
+        },
+      })
         .on('broadcast', { event: 'sync' }, (payload) => {
           const { type, data } = payload.payload;
           this.trigger(type, data);
         })
+        .on('presence', { event: 'sync' }, () => {
+          const newState = this.supabaseChannel?.presenceState();
+          this.trigger('presence:sync', newState);
+        })
         .subscribe();
     }
+  }
+
+  public trackPresence(userData: any) {
+    if (this.supabaseChannel) {
+      this.supabaseChannel.track(userData);
+    }
+  }
+
+  public leaveRoom() {
+    if (this.supabaseChannel) {
+      this.supabaseChannel.unsubscribe();
+      this.supabaseChannel = null;
+    }
+    this.currentRoom = null;
   }
 
   public on(type: string, callback: EventCallback) {
@@ -45,7 +77,7 @@ class SocketEmulator {
     this.trigger(type, data);
 
     // 2. BroadcastChannel trigger (same origin, same device)
-    this.channel.postMessage({ type, data });
+    this.localChannel.postMessage({ type, data });
 
     // 3. Supabase trigger (cross device)
     if (this.supabaseChannel) {

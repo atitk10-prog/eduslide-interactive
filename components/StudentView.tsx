@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideCheckCircle2, LucideClock, LucideAlertTriangle, LucideCheck, LucideX, LucideSend, LucideTrophy } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { supabase } from '../services/supabase';
 
@@ -23,6 +23,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [studentClass, setStudentClass] = useState('');
   const [sessionEnded, setSessionEnded] = useState(false);
   const [showFireworks, setShowFireworks] = useState(false);
+  const [isPresentationStarted, setIsPresentationStarted] = useState(false);
   const timerRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -90,9 +91,14 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setTimeout(() => setShowFireworks(false), 3000);
     };
 
+    const handlePresentationStart = () => {
+      setIsPresentationStarted(true);
+    };
+
     socket.on('slide:change', handleSlideChange);
     socket.on('question:state', handleQuestionState);
     socket.on('session:start', handleSessionStart);
+    socket.on('presentation:start', handlePresentationStart);
     socket.on('leaderboard:show', handleLeaderboardShow);
     socket.on('leaderboard:hide', handleLeaderboardHide);
     socket.on('session:end', handleSessionEnd);
@@ -102,13 +108,59 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.off('slide:change', handleSlideChange);
       socket.off('question:state', handleQuestionState);
       socket.off('session:start', handleSessionStart);
+      socket.off('presentation:start', handlePresentationStart);
       socket.off('leaderboard:show', handleLeaderboardShow);
       socket.off('leaderboard:hide', handleLeaderboardHide);
       socket.off('session:end', handleSessionEnd);
       socket.off('feedback:correct', handleFeedbackCorrect);
+      socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
+
+  // Postgres Realtime Subscriptions for robustness
+  useEffect(() => {
+    if (!sessionData?.id) return;
+
+    const channel = supabase.channel(`session_updates_${sessionData.id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'edu_sessions',
+        filter: `id=eq.${sessionData.id}`
+      }, (payload) => {
+        const newData = payload.new;
+
+        // Dynamic Update based on DB
+        if (newData.current_slide_index !== undefined) {
+          setCurrentSlideIndex(newData.current_slide_index);
+        }
+
+        if (newData.is_active !== undefined) {
+          setIsPresentationStarted(newData.is_active);
+        }
+
+        if (newData.active_question_id !== undefined) {
+          const isActive = !!newData.active_question_id;
+          setIsQuestionActive(isActive);
+
+          if (isActive) {
+            // Find question duration from session data if possible
+            const q = sessionData.slides[newData.current_slide_index]?.questions.find((q: any) => q.id === newData.active_question_id);
+            if (q) setTimeLeft(q.duration || 30);
+          }
+        }
+
+        if (newData.is_active === false && sessionData.isActive === true) {
+          // Might indicate session end or question stop
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [sessionData?.id]);
 
   const submitAnswer = async (questionId: string, answer: any) => {
     if (submittedAnswers[questionId] || isTimeout) return;
@@ -145,7 +197,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setIsQuestionActive(true);
     }
 
+    if (session.isActive) {
+      setIsPresentationStarted(true);
+    }
+
     setIsJoined(true);
+    socket.joinRoom(roomCode);
+    socket.trackPresence({ name: user.name, class: studentClass || 'N/A' });
     socket.emit('session:join', { roomCode, userName: user.name });
   };
 
@@ -334,6 +392,27 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
                 <p className="text-green-600 text-sm font-medium italic">Vui lòng chờ slide tiếp theo từ giáo viên.</p>
               </div>
             )}
+          </div>
+        ) : !isPresentationStarted ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center max-w-xs space-y-8 py-20 animate-in fade-in zoom-in-95">
+            <div className="relative">
+              <div className="absolute inset-0 bg-indigo-400 rounded-full blur-2xl opacity-20 animate-pulse" />
+              <div className="bg-indigo-600 text-white p-10 rounded-[2.5rem] shadow-2xl relative">
+                <LucideUsers className="w-16 h-16" />
+              </div>
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">Chào mừng {user.name}!</h2>
+              <p className="text-slate-500 font-medium mt-3 leading-relaxed">Bạn đã vào phòng chờ. Hãy chờ giáo viên bắt đầu bài giảng nhé.</p>
+              <div className="mt-8 flex flex-col items-center gap-2">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Đang kết nối...</span>
+              </div>
+            </div>
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center max-w-xs space-y-8 py-20">
