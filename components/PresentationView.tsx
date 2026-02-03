@@ -55,6 +55,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [basePoints, setBasePoints] = useState(initialSession.basePoints || 100);
   const [isFocusMode, setIsFocusMode] = useState(initialSession.isFocusMode || false);
   const [isSyncingFullscreen, setIsSyncingFullscreen] = useState(false);
+  const [violatingStudents, setViolatingStudents] = useState<Set<string>>(new Set());
 
   // Q&A State
   const [qaQuestions, setQaQuestions] = useState<any[]>([]);
@@ -143,6 +144,15 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       return newState;
     });
   };
+
+  // Load responses on mount (for resume/restore)
+  useEffect(() => {
+    if (session.id) {
+      dataService.getResponses(session.id).then(res => {
+        setResponses(res);
+      });
+    }
+  }, [session.id]);
 
   // Calculate stats for charts
   const statsData = useMemo(() => {
@@ -297,13 +307,16 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
 
-        if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
-          canvas.width = 640; // Low res for performance
-          canvas.height = 360; // 16:9 aspect
+        if (vid.readyState >= 2 && ctx && vid.videoWidth > 0) { // HAVE_CURRENT_DATA or better
+          // Maintain aspect ratio
+          const aspect = vid.videoWidth / vid.videoHeight;
+          canvas.width = 640;
+          canvas.height = 640 / aspect;
+
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
-          // Low quality JPEG
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+          // Low quality JPEG to fit in Supabase Realtime Payload (limit ~6MB, but aim for <100KB for speed)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.3);
           socket.emit('screen:frame', { image: dataUrl });
         }
       }, 500); // 2 FPS
@@ -425,10 +438,22 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     const handleStudentAlert = (data: { name: string, reason: string }) => {
       const id = Date.now();
       setStudentAlerts(prev => [...prev, { ...data, id }]);
+      setViolatingStudents(prev => new Set(prev).add(data.name));
+
       setTimeout(() => {
         setStudentAlerts(prev => prev.filter(a => a.id !== id));
       }, 5000);
     };
+
+    const handleStudentReturn = (data: { studentName: string }) => {
+      setViolatingStudents(prev => {
+        const next = new Set(prev);
+        next.delete(data.studentName);
+        return next;
+      });
+    };
+
+    socket.on('student:returned', handleStudentReturn);
 
     const handleOffline = () => setIsOnline(false);
     const handleOnline = () => {
@@ -1673,8 +1698,39 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </button>
             <button onClick={() => setShowSettingsModal(true)} className="p-5 bg-white/5 text-white rounded-2xl hover:bg-white/10 transition-all"><LucideSettings /></button>
           </div>
+          <div className="flex items-center gap-2 border-l border-white/10 ml-2 pl-4">
+            <button
+              onClick={async () => {
+                if (confirm("Bạn có chắc muốn kết thúc hoàn toàn phiên học này? Học sinh sẽ không thể tham gia nữa.")) {
+                  await dataService.updateSession(session.id, { isActive: false });
+                  onExit();
+                }
+              }}
+              className="px-6 h-16 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black text-xs tracking-widest transition-all shadow-lg shadow-red-900/20"
+            >
+              KẾT THÚC PHIÊN
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Persistent Violators List */}
+      {violatingStudents.size > 0 && (
+        <div className="fixed bottom-24 right-6 bg-red-600 text-white p-6 rounded-2xl shadow-2xl border-4 border-red-400 z-50 animate-bounce">
+          <h4 className="font-black text-lg mb-2 flex items-center gap-2">
+            <LucideAlertTriangle className="w-6 h-6 text-yellow-300" />
+            ĐANG VI PHẠM ({violatingStudents.size})
+          </h4>
+          <ul className="space-y-1 font-bold text-sm">
+            {Array.from(violatingStudents).map(name => (
+              <li key={name} className="flex items-center gap-2">
+                <span className="w-2 h-2 bg-yellow-300 rounded-full animate-ping"></span>
+                {name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div >
   );
 };

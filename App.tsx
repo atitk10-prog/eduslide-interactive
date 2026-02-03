@@ -129,6 +129,17 @@ const App: React.FC = () => {
 
   const startPresentation = async (session: Session) => {
     try {
+      // 0. If session is already active, RESUME it instead of cloning
+      if (session.isActive) {
+        // Refresh session data to ensure we have the latest state (current slide, etc.)
+        const latestSession = await dataService.getSessionById(session.id);
+        if (latestSession) {
+          setCurrentSession(latestSession);
+          setView('PRESENTATION');
+          return;
+        }
+      }
+
       // 1. Clone session to create a fresh learning instance with new room code
       const freshSession = await dataService.cloneSession(session.id);
       if (!freshSession) {

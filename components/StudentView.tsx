@@ -84,7 +84,6 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setIsQuestionActive(false);
       setIsTimeout(false);
       setRevealData(null);
-      setRevealData(null);
     };
 
     // Auto-rejoin from localStorage
@@ -93,21 +92,16 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       if (saved) {
         try {
           const { roomCode: savedRoom, timestamp } = JSON.parse(saved);
-          // Verify if session is still valid (e.g., within 24 hours)
           if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
             setRoomCode(savedRoom);
-            // Attempt silent join
             const session = await dataService.getSessionByRoomCode(savedRoom);
             if (session && session.isActive) {
               setSessionData(session);
               setCurrentSlideIndex(session.currentSlideIndex || 0);
               setIsPresentationStarted(session.isActive);
               if (session.activeQuestionId) setIsQuestionActive(true);
-
               setIsJoined(true);
-              socket.joinRoom(savedRoom);
-              socket.trackPresence({ name: user.name, class: 'N/A' }); // Class might be missing in restore, can be improved
-              socket.emit('session:join', { roomCode: savedRoom, userName: user.name });
+              // Socket joining is handled by the dedicated useEffect below
               console.log("Auto-rejoined session:", savedRoom);
             }
           }
@@ -117,6 +111,25 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       }
     };
     checkSavedSession();
+  }, []);
+
+  // Centralized Socket Connection Logic
+  useEffect(() => {
+    if (isJoined && roomCode) {
+      console.log("Initializing Socket connection for:", roomCode);
+      socket.joinRoom(roomCode);
+      socket.trackPresence({ name: user.name, class: 'N/A' });
+      socket.emit('session:join', { roomCode, userName: user.name });
+
+      return () => {
+        socket.leaveRoom();
+      };
+    }
+  }, [isJoined, roomCode, user.name]);
+
+  // Socket Event Listeners
+  useEffect(() => {
+    if (!isJoined) return;
 
     // Screen Share Listeners
     const handleScreenFrame = (data: any) => {
@@ -614,9 +627,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     if (session.activeQuestionId) setIsQuestionActive(true);
 
     setIsJoined(true);
-    socket.joinRoom(roomCode);
-    socket.trackPresence({ name: user.name, class: studentClass || 'N/A' });
-    socket.emit('session:join', { roomCode, userName: user.name });
+    // socket.joinRoom handled by useEffect when isJoined becomes true
 
     // Save session state for auto-rejoin
     localStorage.setItem('eduslide_student_session', JSON.stringify({
@@ -645,6 +656,87 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     } else {
       alert("Lỗi: Không thể gửi câu hỏi lúc này.");
     }
+  };
+
+  // Focus Mode Enforcement
+  useEffect(() => {
+    if (!isFocusMode || !isJoined) return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setAlertMessage("CẢNH BÁO: BẠN ĐANG RỜI KHỎI BÀI HỌC! Vui lòng quay lại ngay.");
+        socket.emit('student:violation', {
+          studentName: user.name,
+          reason: 'Tab Switching / Alt+Tab',
+          roomCode
+        });
+        // Play warning sound
+        const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/933/933-preview.mp3');
+        audio.play().catch(() => { });
+      } else {
+        // Clear alert when back
+        // setAlertMessage(null); 
+        socket.emit('student:returned', { studentName: user.name, roomCode });
+      }
+    };
+
+    const handleBlur = () => {
+      // Blur can happen when clicking iframe or devtools, be careful.
+      // But for kiosk mode, blur usually means alt-tab.
+      if (!document.hidden) {
+        setAlertMessage("CẢNH BÁO: HÃY GIỮ MÀN HÌNH TẠI ĐÂY!");
+        socket.emit('student:violation', {
+          studentName: user.name,
+          reason: 'Window Blur / Alt+Tab',
+          roomCode
+        });
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleBlur);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [isFocusMode, isJoined, user.name, roomCode]);
+
+  // Fullscreen Enforcement
+  useEffect(() => {
+    if (!isFocusMode || !isJoined) return;
+
+    const handleFullscreenChange = () => {
+      setIsCurrentlyFullscreen(!!document.fullscreenElement);
+      if (!document.fullscreenElement) {
+        socket.emit('student:violation', {
+          studentName: user.name,
+          reason: 'Exited Fullscreen',
+          roomCode
+        });
+      } else {
+        socket.emit('student:returned', { studentName: user.name, roomCode });
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+    // Auto-request fullscreen when entering focus mode (might be blocked by browser if no user interaction, so we show a button instead)
+    if (!document.fullscreenElement) {
+      setIsCurrentlyFullscreen(false);
+    } else {
+      setIsCurrentlyFullscreen(true);
+    }
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, [isFocusMode, isJoined]);
+
+  const enterFullscreen = () => {
+    document.documentElement.requestFullscreen().catch(err => {
+      console.error("Error enabling fullscreen:", err);
+    });
   };
 
   const submitPollResponse = async (option: string) => {
@@ -1190,6 +1282,40 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           </div>
         )}
       </div>
+      {/* Focus Mode Fullscreen Blocker */}
+      {isFocusMode && !isCurrentlyFullscreen && isJoined && (
+        <div className="fixed inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center p-10 text-center animate-in fade-in duration-300">
+          <LucideMaximize2 className="w-20 h-20 text-yellow-400 mb-6 animate-bounce" />
+          <h2 className="text-3xl font-black text-white mb-4">CHẾ ĐỘ TẬP TRUNG ĐANG BẬT</h2>
+          <p className="text-slate-400 font-bold max-w-md mb-8">
+            Giáo viên yêu cầu bạn phải giữ màn hình ở chế độ Toàn màn hình. Vui lòng quay lại lớp học ngay.
+          </p>
+          <button
+            onClick={enterFullscreen}
+            className="bg-indigo-600 hover:bg-indigo-500 text-white px-10 py-5 rounded-2xl font-black text-xl shadow-xl transition-all active:scale-95 flex items-center gap-3"
+          >
+            <LucideMaximize2 className="w-6 h-6" />
+            VÀO LẠI TOÀN MÀN HÌNH
+          </button>
+        </div>
+      )}
+
+      {/* Focus Mode Tab Switch Blocker (Visual Shame) */}
+      {isFocusMode && alertMessage && (
+        <div className="fixed inset-0 bg-red-600 z-[110] flex flex-col items-center justify-center p-10 text-center animate-in zoom-in duration-300">
+          <LucideAlertTriangle className="w-32 h-32 text-white mb-6 animate-ping" />
+          <h1 className="text-5xl font-black text-white mb-4">CẢNH BÁO VI PHẠM</h1>
+          <p className="text-white/80 font-bold text-2xl max-w-2xl mb-10">
+            {alertMessage}
+          </p>
+          <button
+            onClick={() => setAlertMessage(null)}
+            className="bg-white text-red-600 px-10 py-4 rounded-2xl font-black shadow-xl"
+          >
+            ĐÃ HIỂU, TÔI SẼ KHÔNG TÁI PHẠM
+          </button>
+        </div>
+      )}
     </div>
   );
 };

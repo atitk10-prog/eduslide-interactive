@@ -49,13 +49,13 @@ export const dataService = {
             createdAt: s.created_at,
             slides: (s.slides || []).map((sl: any) => ({
                 id: sl.id,
-                title: sl.title,
-                content: sl.content,
                 imageUrl: sl.image_url,
                 pdfSource: sl.pdf_source,
                 pdfPage: sl.pdf_page,
+                title: sl.title,
+                content: sl.content,
                 questions: sl.questions || []
-            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title)),
+            })).sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0)),
             responses: []
         }));
     },
