@@ -369,16 +369,9 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     }
   }, [session.slides.length, session.id]);
 
+  // 1. Socket Connection & Event Listeners (Stable)
   useEffect(() => {
     socket.joinRoom(session.roomCode);
-
-    socket.emit('session:start', {
-      roomCode: session.roomCode,
-      currentSlideIndex: currentSlideIndex,
-      title: session.title,
-      slides: session.slides,
-      isStarted: isPresentationStarted
-    });
 
     const handleAnswer = (data: AnswerResponse) => {
       setResponses(prev => [...prev, data]);
@@ -425,16 +418,10 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setQuickPoll((prev: any) => {
         if (!prev) return null;
         const updated = { ...prev, responses: { ...prev.responses, [studentName]: option } };
-        // We don't need to broadcast back the whole poll state every time if students just send responses
-        // But the teacher needs to see it.
         return updated;
       });
     };
 
-    socket.on('answer:submit', handleAnswer);
-    socket.on('presence:sync', handlePresenceSync);
-    socket.on('qa:submit', handleQASubmit);
-    socket.on('qa:upvote', handleQAUpvote);
     const handleStudentAlert = (data: { name: string, reason: string }) => {
       const id = Date.now();
       setStudentAlerts(prev => [...prev, { ...data, id }]);
@@ -453,21 +440,24 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       });
     };
 
-    socket.on('student:returned', handleStudentReturn);
-
     const handleOffline = () => setIsOnline(false);
     const handleOnline = () => {
       setIsOnline(true);
       dataService.syncOfflineData();
     };
 
+    socket.on('answer:submit', handleAnswer);
+    socket.on('presence:sync', handlePresenceSync);
+    socket.on('qa:submit', handleQASubmit);
+    socket.on('qa:upvote', handleQAUpvote);
+    socket.on('student:alert', handleStudentAlert);
+    socket.on('student:returned', handleStudentReturn);
+    socket.on('poll:response', handlePollResponse);
+
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
 
-    socket.on('student:alert', handleStudentAlert);
-    socket.on('poll:response', handlePollResponse);
-
-    // Fetch historical data
+    // Initial fetch
     const fetchHistory = async () => {
       const respHistory = await dataService.getResponses(session.id);
       if (respHistory.length > 0) setResponses(respHistory);
@@ -505,12 +495,27 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       socket.off('presence:sync', handlePresenceSync);
       socket.off('qa:submit', handleQASubmit);
       socket.off('qa:upvote', handleQAUpvote);
+      socket.off('student:alert', handleStudentAlert);
+      socket.off('student:returned', handleStudentReturn);
       socket.off('poll:response', handlePollResponse);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
       socket.leaveRoom();
       stopTimer();
       stopScreenShare();
     };
-  }, [session, currentSlideIndex, isPresentationStarted]);
+  }, [session.id, session.roomCode]); // Only reconnect if Identity changes
+
+  // 2. Data Sync (Reactive)
+  useEffect(() => {
+    socket.emit('session:start', {
+      roomCode: session.roomCode,
+      currentSlideIndex: currentSlideIndex,
+      title: session.title,
+      slides: session.slides,
+      isStarted: isPresentationStarted
+    });
+  }, [currentSlideIndex, isPresentationStarted, session.roomCode, session.title]);
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     setIsDrawing(true);
