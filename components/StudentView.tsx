@@ -463,10 +463,9 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.off('qa:update', handleQAUpdate);
       socket.off('poll:start', handlePollStart);
       socket.off('poll:stop', handlePollStop);
-      socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [roomCode]); // Added roomCode to dependencies for handlePresentationStart
+  }, [isJoined, roomCode]); // Re-run only if joined state changes (socket room is stable in other effect)
 
   // Postgres Realtime Subscriptions for robustness
   useEffect(() => {
