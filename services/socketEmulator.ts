@@ -56,6 +56,18 @@ class SocketEmulator {
         .subscribe((status) => {
           console.log(`[Socket] Subscription status: ${status}`);
           this.isConnected = status === 'SUBSCRIBED';
+
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.error(`[Socket] Connection error: ${status}. Retrying in 5s...`);
+            this.isConnected = false;
+            setTimeout(() => {
+              if (this.currentRoom === roomCode) {
+                console.log(`[Socket] Attempting manual reconnect to ${roomCode}...`);
+                this.leaveRoom();
+                this.joinRoom(roomCode);
+              }
+            }, 5000);
+          }
         });
     } else {
       console.warn("[Socket] Supabase URL missing. Falling back to Local BroadcastChannel only (Dev Mode).");
