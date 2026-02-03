@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Session, AnswerResponse, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff, LucideLock, LucideUnlock } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import PDFSlideRenderer from './PDFSlideRenderer';
 import { dataService } from '../services/dataService';
 
@@ -53,6 +53,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [showQRHeader, setShowQRHeader] = useState(false);
   const [showSettings, setShowSettingsModal] = useState(false);
   const [basePoints, setBasePoints] = useState(initialSession.basePoints || 100);
+  const [isFocusMode, setIsFocusMode] = useState(initialSession.isFocusMode || false);
+  const [isSyncingFullscreen, setIsSyncingFullscreen] = useState(false);
 
   // Q&A State
   const [qaQuestions, setQaQuestions] = useState<any[]>([]);
@@ -64,13 +66,14 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
   // Real-time Drawing State
   const [paths, setPaths] = useState<any[]>([]);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [brushColor, setBrushColor] = useState('#6366f1');
   const [brushWidth, setBrushWidth] = useState(4);
   const [isEraser, setIsEraser] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [brushColor, setBrushColor] = useState('#6366f1');
 
   const timerRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const currentSlide = session.slides[currentSlideIndex];
@@ -141,6 +144,41 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     });
   };
 
+  // Calculate stats for charts
+  const statsData = useMemo(() => {
+    // Determine active question
+    const activeSlide = session.slides[currentSlideIndex];
+    const activeQuestion = activeSlide?.questions.find(q => session.activeQuestionId === q.id) || activeSlide?.questions[0];
+
+    if (!activeQuestion) return { pie: [], bar: [] };
+
+    // Filter responses for this question
+    const relevantResponses = responses.filter(r => r.questionId === activeQuestion.id);
+
+    // Calculate Correct/Incorrect
+    let correctCount = 0;
+    relevantResponses.forEach(r => {
+      const studentAns = JSON.stringify(r.answer);
+      const correctAns = JSON.stringify(activeQuestion.correctAnswer);
+      if (studentAns === correctAns) correctCount++;
+    });
+
+    const incorrectCount = relevantResponses.length - correctCount;
+
+    const pie = [
+      { name: 'Đúng', value: correctCount, color: '#22c55e' },
+      { name: 'Sai', value: incorrectCount, color: '#ef4444' }
+    ];
+
+    // Calculate Option Distribution
+    const bar = (activeQuestion.options || []).map(opt => ({
+      name: opt,
+      count: relevantResponses.filter(r => r.answer === opt).length
+    }));
+
+    return { pie, bar };
+  }, [responses, session, currentSlideIndex]);
+
   const exportToCSV = () => {
     const leaderboard = calculateLeaderboard('CUMULATIVE');
     const headers = ['Hạng', 'Học sinh', 'Số câu đúng', 'Tổng số câu', 'Tổng điểm'];
@@ -184,7 +222,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             stopTimer();
             setIsQuestionActive(false);
             socket.emit('question:state', { isActive: false, questionId: null, isTimeout: true });
-            revealAnswer(); // Auto-reveal on timeout
+            setShowStats(true); // Open stats, let teacher reveal manually
             return 0;
           }
           return prev - 1;
@@ -203,8 +241,24 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setQuestionStartTime(null);
       socket.emit('question:state', { isActive: false, questionId: null });
       dataService.updateSession(session.id, { activeQuestionId: null });
-      revealAnswer(); // Auto-reveal
+      setShowStats(true); // Open stats, let teacher reveal manually
     }
+  };
+
+  const toggleFocusMode = async () => {
+    const newState = !isFocusMode;
+    setIsFocusMode(newState);
+    await dataService.updateSession(session.id, { isFocusMode: newState });
+    socket.emit('focus:mode', { enabled: newState, roomCode: session.roomCode });
+
+    // Toast alert for teacher
+    const id = Date.now();
+    setStudentAlerts(prev => [...prev, {
+      id,
+      name: 'HỆ THỐNG',
+      reason: newState ? 'ĐÃ BẬT CHẾ ĐỘ TẬP TRUNG' : 'ĐÃ TẮT CHẾ ĐỘ TẬP TRUNG'
+    }]);
+    setTimeout(() => setStudentAlerts(prev => prev.filter(a => a.id !== id)), 3000);
   };
 
   const toggleFullscreen = () => {
@@ -231,7 +285,28 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play(); // Ensure video plays
       }
+
+      // Start broadcasting frames
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = window.setInterval(() => {
+        if (!videoRef.current || !canvasRef.current) return;
+
+        const vid = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+
+        if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
+          canvas.width = 640; // Low res for performance
+          canvas.height = 360; // 16:9 aspect
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+
+          // Low quality JPEG
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+          socket.emit('screen:frame', { image: dataUrl });
+        }
+      }, 500); // 2 FPS
 
       stream.getVideoTracks()[0].onended = () => {
         stopScreenShare();
@@ -246,6 +321,11 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       screenStream.getTracks().forEach(track => track.stop());
       setScreenStream(null);
     }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    socket.emit('screen:stop', {});
   };
 
   const revealAnswer = () => {
@@ -390,6 +470,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           responses: activePoll.responses || {}
         });
       }
+
+      if (session.isFocusMode !== undefined) setIsFocusMode(session.isFocusMode);
     };
     fetchHistory();
 
@@ -411,8 +493,14 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
-    const y = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    const domX = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
+    const domY = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+
+    const x = domX * scaleX;
+    const y = domY * scaleY;
 
     const newPath = {
       points: [{ x, y }],
@@ -431,8 +519,14 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
-    const y = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    const domX = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
+    const domY = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+
+    const x = domX * scaleX;
+    const y = domY * scaleY;
 
     setPaths(prev => {
       const lastPath = prev[prev.length - 1];
@@ -490,18 +584,6 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     dataService.updateSession(session.id, { isActive: true });
   };
 
-  const statsData = useMemo(() => {
-    if (!activeQuestion) return [];
-    const currentResponses = responses.filter(r => r.questionId === activeQuestion.id);
-    if (activeQuestion.type === QuestionType.MULTIPLE_CHOICE || activeQuestion.type === QuestionType.TRUE_FALSE) {
-      return (activeQuestion.options || []).map(opt => ({
-        name: opt,
-        count: currentResponses.filter(r => r.answer === opt).length,
-        isCorrect: opt === activeQuestion.correctAnswer
-      }));
-    }
-    return [];
-  }, [activeQuestion, responses]);
 
   const activeStudents = useMemo(() => {
     const uniqueStudents = new Set<string>();
@@ -1088,6 +1170,50 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           </div>
         )}
 
+        {/* Stats Modal */}
+        {showStats && (
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-[60] p-10 flex flex-col items-center justify-center animate-in fade-in duration-300">
+            <div className="bg-white rounded-3xl p-8 w-full max-w-4xl shadow-2xl relative">
+              <button onClick={() => setShowStats(false)} className="absolute top-4 right-4 p-2 hover:bg-slate-100 rounded-full text-slate-400"><LucideX /></button>
+              <h2 className="text-2xl font-black mb-8 flex items-center gap-3"><LucideChartBar className="text-indigo-600" /> THỐNG KÊ CÂU HỎI</h2>
+
+              <div className="grid grid-cols-2 gap-8 h-[400px]">
+                {/* Pie Chart */}
+                <div className="bg-slate-50 rounded-2xl p-4 flex flex-col items-center justify-center">
+                  <h3 className="font-bold text-slate-500 mb-4 uppercase text-xs tracking-widest">Tỷ lệ Đúng / Sai</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie data={statsData.pie} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                        {statsData.pie.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex gap-4 text-sm font-bold">
+                    <span className="text-green-600">Đúng: {statsData.pie[0]?.value}</span>
+                    <span className="text-red-500">Sai: {statsData.pie[1]?.value}</span>
+                  </div>
+                </div>
+
+                {/* Bar Chart */}
+                <div className="bg-slate-50 rounded-2xl p-4 flex flex-col items-center justify-center">
+                  <h3 className="font-bold text-slate-500 mb-4 uppercase text-xs tracking-widest">Phân bố đáp án</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={statsData.bar}>
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Leaderboard Overlay */}
         {showLeaderboard && (
           <div className="absolute inset-0 bg-slate-950 z-40 p-10 flex flex-col items-center justify-center animate-in slide-in-from-bottom-10 duration-500">
@@ -1382,6 +1508,11 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           )}
         </div>
 
+
+        {/* Hidden video/canvas for screen sharing capture */}
+        <video ref={videoRef} className="hidden" muted playsInline />
+        <canvas ref={canvasRef} className="hidden" />
+
         {/* Detailed Report Modal */}
         {showReportModal && (
           <div className="absolute inset-0 z-[110] bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-300">
@@ -1532,6 +1663,16 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             <LucideTrophy /> BXH
           </button>
           <button onClick={() => setShowStats(!showStats)} className="flex items-center gap-3 h-16 bg-white/5 text-white px-8 rounded-2xl font-black text-lg hover:bg-white/10 transition-all"><LucideChartBar /> THỐNG KÊ</button>
+          <div className="flex items-center gap-2 border-l border-white/10 ml-2 pl-4">
+            <button
+              onClick={toggleFocusMode}
+              className={`flex items-center gap-2 px-6 h-16 rounded-2xl font-black text-xs tracking-widest transition-all ${isFocusMode ? 'bg-orange-500 text-white animate-pulse' : 'bg-white/5 text-slate-400 hover:text-white'}`}
+            >
+              {isFocusMode ? <LucideLock className="w-5 h-5" /> : <LucideUnlock className="w-5 h-5 text-slate-500" />}
+              {isFocusMode ? 'CHẾ ĐỘ TẬP TRUNG' : 'TẬP TRUNG: TẮT'}
+            </button>
+            <button onClick={() => setShowSettingsModal(true)} className="p-5 bg-white/5 text-white rounded-2xl hover:bg-white/10 transition-all"><LucideSettings /></button>
+          </div>
         </div>
       </div>
     </div >

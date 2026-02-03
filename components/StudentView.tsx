@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2 } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { supabase } from '../services/supabase';
 import PDFSlideRenderer from './PDFSlideRenderer';
@@ -28,6 +28,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [revealData, setRevealData] = useState<any>(null);
   const [drawingPaths, setDrawingPaths] = useState<any[]>([]);
   const [stats, setStats] = useState({ correct: 0, incorrect: 0 });
+  const [isWaitingForReveal, setIsWaitingForReveal] = useState(false);
+
+  // Gamification State
+  const [level, setLevel] = useState(1);
+  const [currentXP, setCurrentXP] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [showLevelUp, setShowLevelUp] = useState(false);
 
   // Q&A State
   const [qaQuestions, setQaQuestions] = useState<any[]>([]);
@@ -46,6 +53,9 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [showFullscreenNotice, setShowFullscreenNotice] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [offlineCount, setOfflineCount] = useState(0);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isCurrentlyFullscreen, setIsCurrentlyFullscreen] = useState(false);
+  const [screenShareImage, setScreenShareImage] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -56,13 +66,66 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     audioRef.current.play().catch(() => { });
   };
 
+  const calculateGamification = (score: number) => {
+    const newLevel = Math.floor(score / 100) + 1;
+    const xp = score % 100;
+
+    if (newLevel > level) {
+      setShowLevelUp(true);
+      setTimeout(() => setShowLevelUp(false), 4000);
+    }
+    setLevel(newLevel);
+    setCurrentXP(xp);
+  };
+
   useEffect(() => {
     const handleSlideChange = (data: any) => {
       setCurrentSlideIndex(data.slideIndex);
       setIsQuestionActive(false);
       setIsTimeout(false);
       setRevealData(null);
+      setRevealData(null);
     };
+
+    // Auto-rejoin from localStorage
+    const checkSavedSession = async () => {
+      const saved = localStorage.getItem('eduslide_student_session');
+      if (saved) {
+        try {
+          const { roomCode: savedRoom, timestamp } = JSON.parse(saved);
+          // Verify if session is still valid (e.g., within 24 hours)
+          if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+            setRoomCode(savedRoom);
+            // Attempt silent join
+            const session = await dataService.getSessionByRoomCode(savedRoom);
+            if (session && session.isActive) {
+              setSessionData(session);
+              setCurrentSlideIndex(session.currentSlideIndex || 0);
+              setIsPresentationStarted(session.isActive);
+              if (session.activeQuestionId) setIsQuestionActive(true);
+
+              setIsJoined(true);
+              socket.joinRoom(savedRoom);
+              socket.trackPresence({ name: user.name, class: 'N/A' }); // Class might be missing in restore, can be improved
+              socket.emit('session:join', { roomCode: savedRoom, userName: user.name });
+              console.log("Auto-rejoined session:", savedRoom);
+            }
+          }
+        } catch (e) {
+          console.error("Error restoring session:", e);
+        }
+      }
+    };
+    checkSavedSession();
+
+    // Screen Share Listeners
+    const handleScreenFrame = (data: any) => {
+      if (data && data.image) setScreenShareImage(data.image);
+    };
+    const handleScreenStop = () => setScreenShareImage(null);
+
+    socket.on('screen:frame', handleScreenFrame);
+    socket.on('screen:stop', handleScreenStop);
 
     const handleQuestionState = (data: any) => {
       setIsQuestionActive(data.isActive);
@@ -78,6 +141,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
             if (prev <= 1) {
               clearInterval(timerRef.current!);
               setIsQuestionActive(false);
+              setIsWaitingForReveal(true);
               setIsTimeout(true);
               return 0;
             }
@@ -87,6 +151,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       } else {
         if (timerRef.current) clearInterval(timerRef.current);
         if (data.isTimeout) setIsTimeout(true);
+        setIsQuestionActive(false);
+        setIsWaitingForReveal(true);
       }
     };
 
@@ -117,6 +183,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
     const handleQuestionReveal = (data: any) => {
       setRevealData(data);
+      setIsWaitingForReveal(false);
+      setIsQuestionActive(false);
       if (data.questionId) {
         const submitted = submittedAnswers[data.questionId];
         const q = sessionData?.slides[currentSlideIndex]?.questions.find((q: any) => q.id === data.questionId);
@@ -207,6 +275,51 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
         if (freshSession) {
           setSessionData(freshSession);
           setCurrentSlideIndex(freshSession.currentSlideIndex || 0);
+
+          // Restore answers and gamification
+          try {
+            const history = await dataService.getResponses(freshSession.id);
+            const myResponses = history.filter((r: any) => r.studentName === user.name);
+            const restoredAnswers: Record<string, any> = {};
+            let totalScore = 0;
+            let correctCount = 0;
+            let incorrectCount = 0;
+
+            // Base points from session or default
+            const basePoints = freshSession.basePoints || 100;
+
+            myResponses.forEach((r: any) => {
+              restoredAnswers[r.questionId] = r.answer;
+
+              // Calculate Score
+              const q = freshSession.slides.flatMap((s: any) => s.questions).find((q: any) => q.id === r.questionId);
+              if (q) {
+                let isCorrect = false;
+                if (q.type === QuestionType.SHORT_ANSWER) {
+                  const studentAns = String(r.answer || '').trim().toLowerCase();
+                  const correctAns = String(q.correctAnswer).trim().toLowerCase();
+                  isCorrect = studentAns === correctAns;
+                } else {
+                  isCorrect = JSON.stringify(r.answer) === JSON.stringify(q.correctAnswer);
+                }
+
+                if (isCorrect) {
+                  correctCount++;
+                  totalScore += basePoints; // Currently neglecting time bonus for restoration simplicity
+                } else {
+                  incorrectCount++;
+                }
+              }
+            });
+
+            setSubmittedAnswers(restoredAnswers);
+            calculateGamification(totalScore);
+            setStats({ correct: correctCount, incorrect: incorrectCount });
+
+          } catch (err) {
+            console.error("Error restoring history:", err);
+          }
+
           if (freshSession.activeQuestionId) {
             setIsQuestionActive(true);
             const q = freshSession.slides[freshSession.currentSlideIndex]?.questions.find((q: any) => q.id === freshSession.activeQuestionId);
@@ -224,6 +337,17 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
     const handleFullscreenRequest = () => {
       setShowFullscreenNotice(true);
+    };
+
+    const handleFocusMode = (data: { enabled: boolean }) => {
+      setIsFocusMode(data.enabled);
+      if (data.enabled) {
+        setAlertMessage("CHẾ ĐỘ TẬP TRUNG: ĐÃ KÍCH HOẠT");
+        setTimeout(() => setAlertMessage(null), 3000);
+      } else {
+        setAlertMessage("CHẾ ĐỘ TẬP TRUNG: ĐÃ TẮT");
+        setTimeout(() => setAlertMessage(null), 3000);
+      }
     };
 
     const handleOffline = () => setIsOnline(false);
@@ -245,18 +369,36 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. Basic security alerts (always on)
       if (e.key === 'PrintScreen' || (e.ctrlKey && e.key === 'p')) {
         socket.emit('student:alert', { name: user.name, reason: 'SCREENSHOT' });
         setAlertMessage("Hành động chụp ảnh/in màn hình đã được báo cho giáo viên!");
         setTimeout(() => setAlertMessage(null), 3000);
       }
+
+      // 2. Focus Mode Hard Lock
+      if (isFocusMode) {
+        const barredKeys = ['Tab', 'Meta', 'Alt', 'Control', 'Escape', 'F11', 'F12'];
+        if (barredKeys.includes(e.key) || (e.altKey && e.key === 'Tab') || (e.metaKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          setAlertMessage("CHẾ ĐỘ TẬP TRUNG: Bàn phím đã bị khóa!");
+          setTimeout(() => setAlertMessage(null), 2000);
+          return false;
+        }
+      }
+    };
+
+    const handleFullscreenChange = () => {
+      setIsCurrentlyFullscreen(!!document.fullscreenElement);
     };
 
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
     window.addEventListener('copy', handleCopy);
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true); // Use capture to block
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
 
     socket.on('slide:change', handleSlideChange);
     socket.on('fullscreen:request', handleFullscreenRequest);
@@ -275,6 +417,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     socket.on('qa:update', handleQAUpdate);
     socket.on('poll:start', handlePollStart);
     socket.on('poll:stop', handlePollStop);
+    socket.on('focus:mode', handleFocusMode);
 
     return () => {
       window.removeEventListener('offline', handleOffline);
@@ -283,6 +426,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('keydown', handleKeyDown);
 
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+
+      socket.off('screen:frame', handleScreenFrame);
+      socket.off('screen:stop', handleScreenStop);
       socket.off('slide:change', handleSlideChange);
       socket.off('fullscreen:request', handleFullscreenRequest);
       socket.off('question:state', handleQuestionState);
@@ -470,6 +617,12 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     socket.joinRoom(roomCode);
     socket.trackPresence({ name: user.name, class: studentClass || 'N/A' });
     socket.emit('session:join', { roomCode, userName: user.name });
+
+    // Save session state for auto-rejoin
+    localStorage.setItem('eduslide_student_session', JSON.stringify({
+      roomCode,
+      timestamp: Date.now()
+    }));
   };
 
   const submitQAQuestion = async () => {
@@ -537,8 +690,26 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
   return (
     <div className="h-full bg-slate-50 flex flex-col font-sans">
-      <div className="bg-white p-4 border-b flex justify-between items-center sticky top-0 z-10 shadow-sm">
-        <span className="font-black text-indigo-600 truncate max-w-[150px]">{user.name}</span>
+      <div className={`bg-white p-4 border-b flex justify-between items-center sticky top-0 z-10 shadow-sm transition-all ${isCurrentlyFullscreen ? '-translate-y-full' : ''}`}>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center relative shrink-0">
+            <span className="font-black text-indigo-600">L{level}</span>
+            {showLevelUp && (
+              <div className="absolute -top-2 -right-2 bg-yellow-400 text-white text-[8px] px-1 rounded-full animate-bounce font-black">UP!</div>
+            )}
+          </div>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-900 truncate max-w-[120px]">{user.name}</span>
+              {streak >= 3 && <span className="bg-orange-100 text-orange-600 text-[10px] px-2 py-0.5 rounded-full font-black flex items-center gap-1"><LucideImage className="w-3 h-3" /> {streak}</span>}
+            </div>
+            {/* XP Bar */}
+            <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1">
+              <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${currentXP}%` }} />
+            </div>
+          </div>
+        </div>
+
         <div className="flex items-center gap-2">
           {!sessionEnded && (
             <button
@@ -618,7 +789,63 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
               <h3 className="text-xl font-bold text-slate-900 leading-tight">{question.prompt}</h3>
             </div>
 
-            {isTimeout && !submittedAnswers[question.id] && (
+            {/* Waiting for Reveal State */}
+            {isWaitingForReveal && !revealData && (
+              <div className="bg-slate-100 p-8 rounded-[2rem] text-center animate-in fade-in zoom-in duration-300 border-4 border-slate-200 border-dashed">
+                <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
+                  <LucideLock className="w-10 h-10 text-slate-400" />
+                </div>
+                <h3 className="text-xl font-black text-slate-700 uppercase mb-2">ĐÃ ĐÓNG CÂU TRẢ LỜI</h3>
+                <p className="text-slate-500 font-bold">Vui lòng chờ giáo viên công bố đáp án...</p>
+              </div>
+            )}
+
+            {/* Answer Result State */}
+            {revealData && (
+              <div className={`p-8 rounded-[2rem] text-center animate-in fade-in zoom-in duration-500 border-4 shadow-xl mb-6 ${submittedAnswers[question.id] === undefined
+                ? 'bg-slate-100 border-slate-200'
+                : (
+                  (question.type === QuestionType.SHORT_ANSWER
+                    ? String(submittedAnswers[question.id] || '').trim().toLowerCase() === String(revealData.correctAnswer).trim().toLowerCase()
+                    : JSON.stringify(submittedAnswers[question.id]) === JSON.stringify(revealData.correctAnswer))
+                    ? 'bg-green-100 border-green-500 text-green-800'
+                    : 'bg-red-100 border-red-500 text-red-800'
+                )
+                }`}>
+                {submittedAnswers[question.id] === undefined ? (
+                  <div>
+                    <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-6">
+                      <LucideWifiOff className="w-10 h-10 text-slate-400" />
+                    </div>
+                    <h3 className="text-2xl font-black uppercase mb-2">KHÔNG TRẢ LỜI</h3>
+                    <p className="font-bold opacity-70">Bạn đã bỏ lỡ câu hỏi này.</p>
+                  </div>
+                ) : (
+                  (question.type === QuestionType.SHORT_ANSWER
+                    ? String(submittedAnswers[question.id] || '').trim().toLowerCase() === String(revealData.correctAnswer).trim().toLowerCase()
+                    : JSON.stringify(submittedAnswers[question.id]) === JSON.stringify(revealData.correctAnswer))
+                    ? (
+                      <div>
+                        <div className="w-20 h-20 bg-green-500 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-green-200 animate-bounce">
+                          <LucideCheckCircle2 className="w-10 h-10" />
+                        </div>
+                        <h3 className="text-3xl font-black uppercase mb-2">CHÍNH XÁC!</h3>
+                        <p className="font-bold opacity-70">Bạn đã nhận được điểm.</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="w-20 h-20 bg-red-500 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-red-200">
+                          <LucideX className="w-10 h-10" />
+                        </div>
+                        <h3 className="text-3xl font-black uppercase mb-2">RẤT TIẾC!</h3>
+                        <p className="font-bold opacity-70">Đáp án đúng là: <span className="underline decoration-wavy decoration-red-400">{String(revealData.correctAnswer)}</span></p>
+                      </div>
+                    )
+                )}
+              </div>
+            )}
+
+            {isTimeout && !submittedAnswers[question.id] && !isWaitingForReveal && !revealData && (
               <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl flex items-center gap-3 text-amber-700 font-bold animate-in fade-in slide-in-from-top-2">
                 <LucideAlertTriangle className="w-5 h-5 shrink-0" /> Đã hết thời gian trả lời!
               </div>
@@ -889,6 +1116,16 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           </div>
         )}
 
+        {/* Screen Share Overlay */}
+        {screenShareImage && !isQuestionActive && (
+          <div className="absolute inset-0 z-[50] bg-black flex items-center justify-center">
+            <img src={screenShareImage} className="w-full h-full object-contain" alt="Teacher Screen" />
+            <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse flex items-center gap-2">
+              <div className="w-2 h-2 bg-white rounded-full" /> TRỰC TIẾP TỪ GIÁO VIÊN
+            </div>
+          </div>
+        )}
+
         {/* Quick Poll Overlay (Student View) */}
         {quickPoll && (
           <div className="absolute inset-0 z-[150] bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300">
@@ -915,6 +1152,40 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
                   Đã ghi nhận! Chờ giáo viên kết thúc...
                 </p>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Hard Lock Overlay (Focus Mode) */}
+        {isFocusMode && !isCurrentlyFullscreen && isJoined && (
+          <div className="fixed inset-0 z-[1000] bg-slate-900 flex flex-col items-center justify-center p-8 text-center animate-in fade-in zoom-in duration-500">
+            <div className="w-24 h-24 bg-red-500/20 rounded-full flex items-center justify-center mb-8 animate-pulse">
+              <LucideAlertTriangle className="w-12 h-12 text-red-500" />
+            </div>
+            <h2 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter">MÀN HÌNH ĐÃ KHÓA</h2>
+            <p className="text-slate-400 font-bold mb-10 max-w-md">
+              Giáo viên đã bật <span className="text-red-500">CHẾ ĐỘ TẬP TRUNG</span>. Vui lòng quay lại chế độ Toàn màn hình để tiếp tục bài học.
+            </p>
+            <button
+              onClick={() => {
+                const el = document.documentElement;
+                if (el.requestFullscreen) el.requestFullscreen();
+                else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen();
+                else if ((el as any).msRequestFullscreen) (el as any).msRequestFullscreen();
+                setIsCurrentlyFullscreen(true);
+              }}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-10 py-5 rounded-2xl font-black text-xl shadow-[0_20px_50px_rgba(79,70,229,0.3)] transition-all hover:scale-105 flex items-center gap-3"
+            >
+              <LucideMaximize2 /> QUAY LẠI TOÀN MÀN HÌNH
+            </button>
+          </div>
+        )}
+        {/* Level Up Overlay */}
+        {showLevelUp && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none">
+            <div className="bg-yellow-400 text-slate-900 px-8 py-6 rounded-[2rem] shadow-2xl animate-bounce text-center border-4 border-white">
+              <h2 className="text-4xl font-black uppercase italic tracking-tighter mb-2">LEVEL UP!</h2>
+              <p className="font-bold text-lg">Chúc mừng! Bạn đã đạt Level {level}</p>
             </div>
           </div>
         )}

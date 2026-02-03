@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS public.edu_sessions (
   storage_size BIGINT DEFAULT 0, -- Dung lượng bài giảng tính bằng bytes
   score_mode TEXT DEFAULT 'CUMULATIVE', -- 'CUMULATIVE' hoặc 'SINGLE'
   auto_leaderboard BOOLEAN DEFAULT true,
+  base_points INTEGER DEFAULT 100,
+  is_focus_mode BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS public.edu_responses (
 ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS score_mode TEXT DEFAULT 'CUMULATIVE';
 ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS auto_leaderboard BOOLEAN DEFAULT true;
 ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS base_points INTEGER DEFAULT 100;
+ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS is_focus_mode BOOLEAN DEFAULT false;
 ALTER TABLE public.edu_responses ADD COLUMN IF NOT EXISTS student_class TEXT DEFAULT 'N/A';
 ALTER TABLE public.edu_responses ADD COLUMN IF NOT EXISTS is_manual_correct BOOLEAN DEFAULT NULL;
 ALTER TABLE public.edu_profiles ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'email';

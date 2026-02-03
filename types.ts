@@ -40,6 +40,8 @@ export interface Session {
   teacherName?: string;
   storageSize?: number; // bytes
   scoreMode?: 'CUMULATIVE' | 'SINGLE';
+  basePoints?: number;
+  isFocusMode?: boolean;
   createdAt?: string;   // ISO date string
 }
 

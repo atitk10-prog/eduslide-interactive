@@ -31,6 +31,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [replacingSlideId, setReplacingSlideId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [startingSessionId, setStartingSessionId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const formatRelativeTime = (dateStr?: string) => {
@@ -337,9 +338,12 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
         </div>
       </div>
 
-      {/* Grid section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
-        {sessions.map((session) => (
+      {/* Grid section - Active Sessions */}
+      <h3 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tight flex items-center gap-2">
+        <LucidePlay className="w-6 h-6 text-indigo-600" /> Bài giảng đang hoạt động
+      </h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 mb-12">
+        {sessions.filter(s => s.isActive !== false).map((session) => (
           <div key={session.id} className="group bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500">
             <div className="aspect-[16/10] bg-slate-100 relative overflow-hidden">
               {session.slides[0]?.pdfSource ? (
@@ -366,8 +370,20 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                 </div>
               </div>
               <div className="flex gap-2 pt-2">
-                <button onClick={() => onStart(session)} className="flex-1 bg-slate-900 hover:bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2">
-                  <LucidePlay className="w-4 h-4" /> TRÌNH CHIẾU
+                <button
+                  disabled={startingSessionId !== null}
+                  onClick={async () => {
+                    setStartingSessionId(session.id);
+                    try {
+                      await onStart(session);
+                    } finally {
+                      setStartingSessionId(null);
+                    }
+                  }}
+                  className={`flex-1 ${startingSessionId === session.id ? 'bg-indigo-400' : 'bg-slate-900 hover:bg-indigo-600'} text-white py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50`}
+                >
+                  {startingSessionId === session.id ? <LucideLoader2 className="w-4 h-4 animate-spin" /> : <LucidePlay className="w-4 h-4" />}
+                  {startingSessionId === session.id ? 'ĐANG TẢI...' : 'TRÌNH CHIẾU'}
                 </button>
                 <button onClick={() => setEditingSession(session)} className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-colors">
                   <LucideSettings className="w-5 h-5" />
@@ -380,6 +396,46 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           </div>
         ))}
       </div>
+
+      {/* History Section - Inactive Sessions */}
+      {sessions.some(s => s.isActive === false) && (
+        <div className="animate-in slide-in-from-bottom-10 fade-in duration-500">
+          <h3 className="text-xl font-black text-slate-400 mb-6 uppercase tracking-tight flex items-center gap-2">
+            <LucideClock className="w-6 h-6" /> Lịch sử phiên học
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 opacity-75 hover:opacity-100 transition-opacity">
+            {sessions.filter(s => s.isActive === false).map((session) => (
+              <div key={session.id} className="group bg-slate-50 rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-lg transition-all">
+                <div className="p-6 space-y-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="font-bold text-slate-700 line-clamp-1">{session.title}</h3>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                        {formatRelativeTime(session.createdAt)}
+                      </p>
+                    </div>
+                    <div className="bg-slate-200 px-3 py-1 rounded-lg text-[10px] font-black text-slate-500">
+                      {session.roomCode}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => alert("Tính năng xem báo cáo chi tiết đang được phát triển!")}
+                      className="flex-1 bg-white border border-slate-200 text-indigo-600 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 hover:bg-indigo-50"
+                    >
+                      <LucideFileText className="w-4 h-4" /> XEM BÁO CÁO
+                    </button>
+                    <button onClick={() => onDeleteSession(session.id)} className="p-3 bg-white hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl border border-slate-200 transition-colors">
+                      <LucideTrash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Editing Modal */}
       {editingSession && (

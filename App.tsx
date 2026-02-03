@@ -128,19 +128,21 @@ const App: React.FC = () => {
   };
 
   const startPresentation = async (session: Session) => {
-    // 1. Fetch fresh data to avoid stale slides/state
-    const freshSession = await dataService.getSessionById(session.id);
-    if (!freshSession) {
-      alert("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
-      return;
+    try {
+      // 1. Clone session to create a fresh learning instance with new room code
+      const freshSession = await dataService.cloneSession(session.id);
+      if (!freshSession) {
+        alert("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
+        return;
+      }
+
+      // 2. Set the NEW session and view
+      setCurrentSession(freshSession);
+      setView('PRESENTATION');
+    } catch (error) {
+      console.error("Error starting presentation:", error);
+      alert("Đã xảy ra lỗi khi khởi động trình chiếu.");
     }
-
-    // 2. Mark as active in DB
-    await dataService.updateSession(freshSession.id, { isActive: true });
-
-    // 3. Update local state and view
-    setCurrentSession({ ...freshSession, isActive: true });
-    setView('PRESENTATION');
   };
 
   return (

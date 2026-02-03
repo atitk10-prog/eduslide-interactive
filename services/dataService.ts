@@ -43,6 +43,9 @@ export const dataService = {
             isActive: s.is_active,
             activeQuestionId: s.active_question_id,
             storageSize: s.storage_size,
+            scoreMode: s.score_mode || 'CUMULATIVE',
+            basePoints: s.base_points || 100,
+            isFocusMode: s.is_focus_mode || false,
             createdAt: s.created_at,
             slides: (s.slides || []).map((sl: any) => ({
                 id: sl.id,
@@ -90,6 +93,9 @@ export const dataService = {
             isActive: sessionData.is_active,
             activeQuestionId: sessionData.active_question_id || undefined,
             storageSize: sessionData.storage_size || 0,
+            scoreMode: sessionData.score_mode || 'CUMULATIVE',
+            basePoints: sessionData.base_points || 100,
+            isFocusMode: sessionData.is_focus_mode || false,
             createdAt: sessionData.created_at,
             slides: (slidesData || []).map((sl: any) => ({
                 id: sl.id,
@@ -176,7 +182,8 @@ export const dataService = {
         if (data.isActive !== undefined) updateData.is_active = data.isActive;
         if (data.activeQuestionId !== undefined) updateData.active_question_id = data.activeQuestionId;
         if (data.scoreMode !== undefined) updateData.score_mode = data.scoreMode;
-        if ((data as any).basePoints !== undefined) updateData.base_points = (data as any).basePoints;
+        if (data.basePoints !== undefined) updateData.base_points = data.basePoints;
+        if (data.isFocusMode !== undefined) updateData.is_focus_mode = data.isFocusMode;
 
         const { error } = await supabase
             .from('edu_sessions')
@@ -243,6 +250,49 @@ export const dataService = {
         }
 
         return true;
+    },
+
+    async cloneSession(sessionId: string): Promise<Session | null> {
+        if (isMock) return null;
+
+        // 1. Get original session and slides
+        const original = await this.getSessionById(sessionId);
+        if (!original) return null;
+
+        // 2. Generate new room code
+        let newRoomCode = Math.random().toString(36).substr(2, 4).toUpperCase();
+        let isUnique = await this.isRoomCodeUnique(newRoomCode);
+        while (!isUnique) {
+            newRoomCode = Math.random().toString(36).substr(2, 4).toUpperCase();
+            isUnique = await this.isRoomCodeUnique(newRoomCode);
+        }
+
+        // 3. Create new session object (cloned)
+        const newSessionId = crypto.randomUUID();
+        const newSession: Session = {
+            ...original,
+            id: newSessionId,
+            roomCode: newRoomCode,
+            title: `${original.title} - ${new Date().toLocaleDateString('vi-VN')}`,
+            currentSlideIndex: 0,
+            isActive: true,
+            responses: [],
+            activeQuestionId: null,
+            createdAt: new Date().toISOString()
+        };
+
+        // 4. Create session in DB
+        const success = await this.createSession(newSession, original.slides.map(s => ({
+            ...s,
+            id: crypto.randomUUID() // New IDs for slides
+        })));
+
+        if (!success) return null;
+
+        // 5. Deactivate original session
+        await this.updateSession(sessionId, { isActive: false });
+
+        return { ...newSession, slides: original.slides };
     },
 
     async submitResponse(response: AnswerResponse): Promise<boolean> {
@@ -379,6 +429,7 @@ export const dataService = {
             })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title)),
             scoreMode: data.score_mode || 'CUMULATIVE',
             basePoints: data.base_points || 100,
+            isFocusMode: data.is_focus_mode || false,
             autoLeaderboard: data.auto_leaderboard !== false
         } as Session;
     },
