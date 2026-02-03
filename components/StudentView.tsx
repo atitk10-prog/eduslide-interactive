@@ -109,7 +109,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           setCurrentSlideIndex(freshSession.currentSlideIndex || 0);
           if (freshSession.activeQuestionId) {
             setIsQuestionActive(true);
-            const q = freshSession.slides[freshSession.current_slide_index]?.questions.find((q: any) => q.id === freshSession.activeQuestionId);
+            const q = freshSession.slides[freshSession.currentSlideIndex]?.questions.find((q: any) => q.id === freshSession.activeQuestionId);
             if (q) {
               setTimeLeft(q.duration || 30);
             } else {
