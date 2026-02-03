@@ -206,7 +206,13 @@ const App: React.FC = () => {
           />
         )}
         {view === 'PRESENTATION' && currentSession && (
-          <PresentationView session={currentSession} onExit={() => setView('DASHBOARD')} />
+          <PresentationView
+            session={currentSession}
+            onExit={async () => {
+              await dataService.updateSession(currentSession.id, { isActive: false });
+              setView('DASHBOARD');
+            }}
+          />
         )}
         {view === 'STUDENT' && <StudentView user={user!} />}
       </main>
