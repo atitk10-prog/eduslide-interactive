@@ -157,6 +157,7 @@ export const dataService = {
         if (data.pdfSource !== undefined) updateData.pdf_source = data.pdfSource;
         if (data.pdfPage !== undefined) updateData.pdf_page = data.pdfPage;
         if (data.questions !== undefined) updateData.questions = data.questions;
+        if (data.order_index !== undefined) updateData.order_index = data.order_index;
 
         const { error } = await supabase
             .from('edu_slides')

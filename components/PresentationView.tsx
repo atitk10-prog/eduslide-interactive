@@ -13,6 +13,16 @@ interface StudentScore {
   totalAnswered: number;
 }
 
+interface Question {
+  id: string;
+  slideIndex: number;
+  type: QuestionType;
+  prompt: string;
+  options?: string[];
+  correctAnswer?: any;
+  duration: number;
+}
+
 interface PresentationViewProps {
   session: Session;
   onExit: () => void;
@@ -59,7 +69,15 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       // Check correctness
       let isCorrect = false;
       if (q.type === QuestionType.SHORT_ANSWER) {
-        isCorrect = manualGrades[`${q.id}_${resp.studentName}`] || false;
+        const manualGraded = manualGrades[`${q.id}_${resp.studentName}`];
+        if (manualGraded) {
+          isCorrect = true;
+        } else if (q.correctAnswer) {
+          // Smart Match: ignore case, trim whitespace, handle string comparisons
+          const studentAns = String(resp.answer || '').trim().toLowerCase();
+          const correctAns = String(q.correctAnswer).trim().toLowerCase();
+          isCorrect = studentAns === correctAns;
+        }
       } else {
         isCorrect = JSON.stringify(resp.answer) === JSON.stringify(q.correctAnswer);
       }
@@ -303,14 +321,44 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </div>
             <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
               {joinedStudents.map((student, idx) => {
-                const hasAnswered = responses.some(r => r.questionId === activeQuestion?.id && r.studentName === student.name);
+                const response = responses.find(r => r.questionId === activeQuestion?.id && r.studentName === student.name);
+                const hasAnswered = !!response;
+
+                let containerStyle = hasAnswered
+                  ? 'bg-indigo-500/10 border-indigo-500/30'
+                  : 'bg-white/5 border-white/5 opacity-40';
+                let nameStyle = hasAnswered ? 'text-white' : 'text-slate-500';
+
+                if (isAnswerRevealed && hasAnswered && activeQuestion) {
+                  let isCorrect = false;
+                  if (activeQuestion.type === QuestionType.SHORT_ANSWER) {
+                    const manualGraded = manualGrades[`${activeQuestion.id}_${student.name}`];
+                    if (manualGraded) isCorrect = true;
+                    else if (activeQuestion.correctAnswer) {
+                      isCorrect = String(response.answer || '').trim().toLowerCase() === String(activeQuestion.correctAnswer).trim().toLowerCase();
+                    }
+                  } else {
+                    isCorrect = JSON.stringify(response.answer) === JSON.stringify(activeQuestion.correctAnswer);
+                  }
+
+                  // Color coding for results
+                  containerStyle = isCorrect
+                    ? 'bg-green-500/20 border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.2)]'
+                    : 'bg-red-500/20 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]';
+                  nameStyle = isCorrect ? 'text-green-400' : 'text-red-400';
+                }
+
                 return (
-                  <div key={idx} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${hasAnswered ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/5 opacity-50'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${hasAnswered ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-slate-600'}`} />
-                      <span className={`text-[11px] font-bold ${hasAnswered ? 'text-green-400' : 'text-slate-400'}`}>{student.name}</span>
+                  <div key={idx} className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ${containerStyle}`}>
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${hasAnswered ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-slate-600'}`} />
+                      <span className={`text-[11px] font-bold truncate ${nameStyle}`}>{student.name}</span>
                     </div>
-                    {hasAnswered && <LucideCheckCircle2 className="w-3 h-3 text-green-500" />}
+                    {hasAnswered && (
+                      isAnswerRevealed ? (
+                        <span className={`text-[9px] font-black shrink-0 ${nameStyle}`}>{containerStyle.includes('green') ? 'ĐÚNG' : 'SAI'}</span>
+                      ) : <LucideCheckCircle2 className="w-3 h-3 text-indigo-500 shrink-0" />
+                    )}
                   </div>
                 );
               })}
@@ -330,10 +378,44 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
               </div>
             </div>
 
-            <div className="absolute bottom-40 left-1/2 -translate-x-1/2 w-full max-w-4xl px-10 z-20">
-              <div className="bg-white/95 backdrop-blur-md p-8 rounded-[2.5rem] shadow-2xl border-4 border-indigo-500 animate-in slide-in-from-bottom-5">
-                <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest mb-4 inline-block">Câu hỏi hiện tại</span>
-                <h3 className="text-3xl font-black text-slate-900 leading-tight">{activeQuestion?.prompt}</h3>
+            <div className="absolute bottom-40 left-10 w-full max-w-4xl z-20">
+              <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-[3rem] shadow-2xl border-4 border-white/10 animate-in slide-in-from-bottom-5 max-w-2xl">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">Câu hỏi hiện tại</span>
+                  {activeQuestion?.type !== QuestionType.SHORT_ANSWER && (
+                    <div className="flex gap-2">
+                      {activeQuestion?.options?.map((_, i) => (
+                        <span key={i} className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-[10px] font-black text-white">{String.fromCharCode(65 + i)}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <h3 className="text-3xl font-black text-white leading-tight mb-6">{activeQuestion?.prompt}</h3>
+
+                {/* Options Preview for Teacher */}
+                {activeQuestion?.type !== QuestionType.SHORT_ANSWER && (
+                  <div className="grid grid-cols-2 gap-3 mt-4">
+                    {activeQuestion?.options?.map((opt, i) => (
+                      <div key={i} className={`p-4 rounded-2xl border-2 flex items-center justify-between ${activeQuestion.correctAnswer === opt ? 'bg-green-500/20 border-green-500/50 text-green-400' : 'bg-white/5 border-white/10 text-slate-300'}`}>
+                        <div className="flex items-center gap-3">
+                          <span className="w-6 h-6 rounded-lg bg-black/30 flex items-center justify-center text-[10px] font-black">{String.fromCharCode(65 + i)}</span>
+                          <span className="text-sm font-bold">{opt}</span>
+                        </div>
+                        {activeQuestion.correctAnswer === opt && <LucideCheckCircle2 className="w-4 h-4" />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeQuestion?.type === QuestionType.SHORT_ANSWER && activeQuestion.correctAnswer && (
+                  <div className="mt-4 p-4 bg-green-500/10 border-2 border-green-500/30 rounded-2xl flex items-center gap-3">
+                    <LucideCheckCircle2 className="w-5 h-5 text-green-400" />
+                    <div>
+                      <span className="text-[10px] font-black text-green-400 uppercase tracking-widest block">Đáp án đúng (Hệ thống tự rà soát)</span>
+                      <span className="text-white font-bold">{activeQuestion.correctAnswer}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </>
@@ -402,7 +484,10 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
               </div>
               <div className="bg-green-50 p-6 rounded-3xl text-center">
                 <span className="block text-4xl font-black">
-                  {responses.filter(r => JSON.stringify(r.answer) === JSON.stringify(activeQuestion?.correctAnswer)).length}
+                  {responses.filter(resp => {
+                    const q = session.slides.flatMap(s => s.questions).find(q => q.id === resp.questionId);
+                    return JSON.stringify(resp.answer) === JSON.stringify(q?.correctAnswer);
+                  }).length}
                 </span>
                 <span className="text-xs font-bold text-green-400 uppercase tracking-widest">Đúng</span>
               </div>
@@ -439,7 +524,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
         {/* Leaderboard Overlay */}
         {showLeaderboard && (
-          <div className="absolute inset-0 bg-slate-900/98 backdrop-blur-xl z-40 p-10 flex flex-col items-center justify-center animate-in slide-in-from-bottom-10 duration-500">
+          <div className="absolute inset-0 bg-slate-950 z-40 p-10 flex flex-col items-center justify-center animate-in slide-in-from-bottom-10 duration-500">
             <button onClick={() => {
               setShowLeaderboard(false);
               socket.emit('leaderboard:hide', {});
@@ -449,9 +534,10 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
             {/* Simple Fireworks */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <div className="absolute top-1/4 left-1/4 animate-bounce text-4xl">✨</div>
-              <div className="absolute top-1/3 right-1/4 animate-bounce text-4xl delay-100">🎊</div>
-              <div className="absolute bottom-1/4 left-1/3 animate-bounce text-4xl delay-300">⭐</div>
+              <div className="absolute top-1/4 left-1/4 animate-bounce text-4xl opacity-50">✨</div>
+              <div className="absolute top-1/3 right-1/4 animate-ping text-5xl opacity-50">🎉</div>
+              <div className="absolute bottom-1/4 left-1/3 animate-bounce text-4xl opacity-50">✨</div>
+              <div className="absolute top-2/3 right-1/3 animate-pulse text-6xl opacity-30">⭐</div>
             </div>
 
             <div className="text-center mb-10">

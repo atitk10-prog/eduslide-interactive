@@ -112,6 +112,11 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
     try {
       if (files.length === 1 && files[0].type === 'application/pdf') {
         const file = files[0];
+        if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+          alert(`File PDF quá lớn (${(file.size / 1024 / 1024).toFixed(1)}MB). Vui lòng chọn file dưới ${MAX_FILE_SIZE_MB}MB.`);
+          setIsUploading(false);
+          return;
+        }
         setUploadProgress(10);
         const publicUrl = await dataService.uploadPDF(file);
         if (!publicUrl) throw new Error("Upload failed");
@@ -554,6 +559,20 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                                   />
                                 </div>
                               ))}
+                            </div>
+                          )}
+
+                          {slide.questions[0].type === QuestionType.SHORT_ANSWER && (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Đáp án chính xác (Để hệ thống rà soát tự động)</label>
+                              <input
+                                type="text"
+                                value={slide.questions[0].correctAnswer || ''}
+                                onChange={(e) => updateQuestion(idx, { correctAnswer: e.target.value })}
+                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-indigo-500"
+                                placeholder="Nhập đáp án đúng (ví dụ: 42 hoặc Hydrogen)..."
+                              />
+                              <p className="text-[10px] text-slate-400 italic">Mẹo: Chỉ nên nhập 2-3 từ hoặc con số để đạt độ chính xác cao.</p>
                             </div>
                           )}
 

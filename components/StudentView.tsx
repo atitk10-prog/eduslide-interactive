@@ -99,8 +99,27 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setRevealData(data);
     };
 
-    const handlePresentationStart = () => {
+    const handlePresentationStart = async () => {
       setIsPresentationStarted(true);
+      // Force a data refresh to ensure the latest slide order and questions are loaded
+      if (roomCode) {
+        const freshSession = await dataService.getSessionByRoomCode(roomCode);
+        if (freshSession) {
+          setSessionData(freshSession);
+          setCurrentSlideIndex(freshSession.currentSlideIndex || 0);
+          if (freshSession.activeQuestionId) {
+            setIsQuestionActive(true);
+            const q = freshSession.slides[freshSession.current_slide_index]?.questions.find((q: any) => q.id === freshSession.activeQuestionId);
+            if (q) {
+              setTimeLeft(q.duration || 30);
+            } else {
+              setTimeLeft(30);
+            }
+          } else {
+            setIsQuestionActive(false);
+          }
+        }
+      }
     };
 
     socket.on('slide:change', handleSlideChange);
@@ -126,7 +145,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, []);
+  }, [roomCode]); // Added roomCode to dependencies for handlePresentationStart
 
   // Postgres Realtime Subscriptions for robustness
   useEffect(() => {
@@ -427,28 +446,40 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
             {revealData && question.id === revealData.questionId && (
               <div className="animate-in zoom-in-95 duration-500">
-                {JSON.stringify(submittedAnswers[question.id]) === JSON.stringify(revealData.correctAnswer) ? (
-                  <div className="bg-green-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
-                    <LucideTrophy className="w-20 h-20 mx-auto mb-4 animate-bounce" />
-                    <h2 className="text-4xl font-black mb-2">CHÍNH XÁC!</h2>
-                    <p className="text-xl font-bold opacity-80 mb-6">Bạn thật xuất sắc</p>
-                    <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
-                      <span className="text-xs font-black uppercase tracking-widest block opacity-70">Điểm hiện tại</span>
-                      <span className="text-3xl font-black">{revealData.leaderboard.find((s: any) => s.name === user.name)?.score || 0}</span>
+                {(() => {
+                  let isCorrect = false;
+                  const submitted = submittedAnswers[question.id];
+                  if (question.type === QuestionType.SHORT_ANSWER) {
+                    const studentAns = String(submitted || '').trim().toLowerCase();
+                    const correctAns = String(revealData.correctAnswer).trim().toLowerCase();
+                    isCorrect = studentAns === correctAns;
+                  } else {
+                    isCorrect = JSON.stringify(submitted) === JSON.stringify(revealData.correctAnswer);
+                  }
+
+                  return isCorrect ? (
+                    <div className="bg-green-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
+                      <LucideTrophy className="w-20 h-20 mx-auto mb-4 animate-bounce" />
+                      <h2 className="text-4xl font-black mb-2">CHÍNH XÁC!</h2>
+                      <p className="text-xl font-bold opacity-80 mb-6">Bạn thật xuất sắc</p>
+                      <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
+                        <span className="text-xs font-black uppercase tracking-widest block opacity-70">Điểm hiện tại</span>
+                        <span className="text-3xl font-black">{revealData.leaderboard.find((s: any) => s.name === user.name)?.score || 0}</span>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="bg-red-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
-                    <LucideX className="w-20 h-20 mx-auto mb-4 animate-pulse" />
-                    <h2 className="text-4xl font-black mb-2">CHƯA ĐÚNG!</h2>
-                    <p className="text-xl font-bold opacity-80 mb-6">Đừng nản chí nhé</p>
-                    <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
-                      <span className="text-xs font-black uppercase tracking-widest block opacity-70">Đáp án: {Array.isArray(revealData.correctAnswer) ? revealData.correctAnswer.join(', ') : JSON.stringify(revealData.correctAnswer).replace(/[\[\]"]/g, '')}</span>
+                  ) : (
+                    <div className="bg-red-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
+                      <LucideX className="w-20 h-20 mx-auto mb-4 animate-pulse" />
+                      <h2 className="text-4xl font-black mb-2">CHƯA ĐÚNG!</h2>
+                      <p className="text-xl font-bold opacity-80 mb-6">Đừng nản chí nhé</p>
+                      <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
+                        <span className="text-xs font-black uppercase tracking-widest block opacity-70">Đáp án: {Array.isArray(revealData.correctAnswer) ? revealData.correctAnswer.join(', ') : String(revealData.correctAnswer).replace(/[\[\]"]/g, '')}</span>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             )}
           </div>
