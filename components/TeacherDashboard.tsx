@@ -119,15 +119,21 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           return;
         }
         setUploadProgress(10);
-        const publicUrl = await dataService.uploadPDF(file);
+
+        // Optimize: Run Upload and PDF Processing in Parallel
+        const uploadPromise = dataService.uploadPDF(file);
+        const pdfProcessingPromise = (async () => {
+          const localUrl = URL.createObjectURL(file);
+          const loadingTask = pdfjs.getDocument({ url: localUrl });
+          const pdf = await loadingTask.promise;
+          return pdf.numPages;
+        })();
+
+        const [publicUrl, numPages] = await Promise.all([uploadPromise, pdfProcessingPromise]);
+
         if (!publicUrl) throw new Error("Upload failed");
-        setUploadProgress(40);
 
-        const loadingTask = pdfjs.getDocument({ url: publicUrl });
-        const pdf = await loadingTask.promise;
-        const numPages = pdf.numPages;
-
-        setUploadProgress(70);
+        setUploadProgress(80); // Jump progress because both heavy tasks are done
 
         let roomCode = Math.random().toString(36).substr(2, 4).toUpperCase();
         let isUnique = await dataService.isRoomCodeUnique(roomCode);
