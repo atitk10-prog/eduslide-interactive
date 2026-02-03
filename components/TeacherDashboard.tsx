@@ -10,10 +10,7 @@ const MAX_IMAGE_DIMENSION = 1920;
 const MAX_FILE_SIZE_MB = 10;
 
 // Configure worker for TeacherDashboard
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface TeacherDashboardProps {
   sessions: Session[];
