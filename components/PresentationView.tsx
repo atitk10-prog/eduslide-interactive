@@ -373,6 +373,14 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   useEffect(() => {
     socket.joinRoom(session.roomCode);
 
+    socket.emit('session:start', {
+      roomCode: session.roomCode,
+      currentSlideIndex: currentSlideIndex,
+      title: session.title,
+      slides: session.slides,
+      isStarted: isPresentationStarted
+    });
+
     const handleAnswer = (data: AnswerResponse) => {
       setResponses(prev => [...prev, data]);
     };
@@ -495,9 +503,9 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       socket.off('presence:sync', handlePresenceSync);
       socket.off('qa:submit', handleQASubmit);
       socket.off('qa:upvote', handleQAUpvote);
+      socket.off('poll:response', handlePollResponse);
       socket.off('student:alert', handleStudentAlert);
       socket.off('student:returned', handleStudentReturn);
-      socket.off('poll:response', handlePollResponse);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('online', handleOnline);
       socket.leaveRoom();
@@ -505,18 +513,6 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       stopScreenShare();
     };
   }, [session.id, session.roomCode]); // Only reconnect if Identity changes
-
-  // 2. Data Sync (Reactive)
-  useEffect(() => {
-    socket.emit('session:start', {
-      roomCode: session.roomCode,
-      currentSlideIndex: currentSlideIndex,
-      title: session.title,
-      slides: session.slides,
-      isStarted: isPresentationStarted
-    });
-  }, [currentSlideIndex, isPresentationStarted, session.roomCode, session.title]);
-
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     setIsDrawing(true);
     const canvas = canvasRef.current;
