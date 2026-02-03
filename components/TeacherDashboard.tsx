@@ -10,7 +10,10 @@ const MAX_IMAGE_DIMENSION = 1920;
 const MAX_FILE_SIZE_MB = 10;
 
 // Configure worker for TeacherDashboard
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 interface TeacherDashboardProps {
   sessions: Session[];
@@ -116,26 +119,15 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           return;
         }
         setUploadProgress(10);
-
-        // Optimize: Run Upload and PDF Processing in Parallel with Granular Progress
-        const uploadTask = dataService.uploadPDF(file).then(url => {
-          setUploadProgress(prev => Math.max(prev, 50));
-          return url;
-        });
-
-        const processingTask = (async () => {
-          const localUrl = URL.createObjectURL(file);
-          const loadingTask = pdfjs.getDocument({ url: localUrl });
-          const pdf = await loadingTask.promise;
-          setUploadProgress(prev => Math.max(prev, 40));
-          return pdf.numPages;
-        })();
-
-        const [publicUrl, numPages] = await Promise.all([uploadTask, processingTask]);
-
+        const publicUrl = await dataService.uploadPDF(file);
         if (!publicUrl) throw new Error("Upload failed");
+        setUploadProgress(40);
 
-        setUploadProgress(90); // Almost there
+        const loadingTask = pdfjs.getDocument({ url: publicUrl });
+        const pdf = await loadingTask.promise;
+        const numPages = pdf.numPages;
+
+        setUploadProgress(70);
 
         let roomCode = Math.random().toString(36).substr(2, 4).toUpperCase();
         let isUnique = await dataService.isRoomCodeUnique(roomCode);
@@ -406,10 +398,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       </div>
 
       {/* History Section - Inactive Sessions */}
-      {sessionData.some(s => s.isActive === false) && (
+      {sessions.some(s => s.isActive === false) && (
         <div className="animate-in slide-in-from-bottom-10 fade-in duration-500">
           <h3 className="text-xl font-black text-slate-400 mb-6 uppercase tracking-tight flex items-center gap-2">
-            <LucideLayoutList className="w-6 h-6" /> Kho bài giảng
+            <LucideClock className="w-6 h-6" /> Lịch sử phiên học
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 opacity-75 hover:opacity-100 transition-opacity">
             {sessions.filter(s => s.isActive === false).map((session) => (

@@ -10,85 +10,55 @@ class SocketEmulator {
   private supabaseChannel: RealtimeChannel | null = null;
   private currentRoom: string | null = null;
   private listeners: Map<string, Set<EventCallback>> = new Map();
-  public isConnected: boolean = false;
 
   constructor() {
     this.localChannel = new BroadcastChannel('eduslide_sync_channel');
     this.localChannel.onmessage = (event) => {
       const { type, data } = event.data;
-      // Local broadcast loopback
       this.trigger(type, data);
     };
   }
 
   public joinRoom(roomCode: string) {
-    if (this.currentRoom === roomCode && this.supabaseChannel) {
-      console.log(`[Socket] Already in room ${roomCode}`);
-      return;
-    }
+    if (this.currentRoom === roomCode) return;
 
     this.leaveRoom();
     this.currentRoom = roomCode;
-    console.log(`[Socket] Joining room: ${roomCode}`);
 
     // Initialize Supabase Realtime for THIS room
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
       this.supabaseChannel = supabase.channel(`room_${roomCode}`, {
         config: {
-          broadcast: { self: false },
           presence: {
             key: roomCode,
           },
         },
-      });
-
-      this.supabaseChannel
+      })
         .on('broadcast', { event: 'sync' }, (payload) => {
           const { type, data } = payload.payload;
-          console.log(`[Socket] RX Broadcast: ${type}`, data);
           this.trigger(type, data);
         })
         .on('presence', { event: 'sync' }, () => {
           const newState = this.supabaseChannel?.presenceState();
           this.trigger('presence:sync', newState);
         })
-        .subscribe((status) => {
-          console.log(`[Socket] Subscription status: ${status}`);
-          this.isConnected = status === 'SUBSCRIBED';
-
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.error(`[Socket] Connection error: ${status}. Retrying in 5s...`);
-            this.isConnected = false;
-            setTimeout(() => {
-              if (this.currentRoom === roomCode) {
-                console.log(`[Socket] Attempting manual reconnect to ${roomCode}...`);
-                this.leaveRoom();
-                this.joinRoom(roomCode);
-              }
-            }, 5000);
-          }
-        });
-    } else {
-      console.warn("[Socket] Supabase URL missing. Falling back to Local BroadcastChannel only (Dev Mode).");
-      this.isConnected = true;
+        .subscribe();
     }
   }
 
   public trackPresence(userData: any) {
     if (this.supabaseChannel) {
-      this.supabaseChannel.track(userData).catch(err => console.error("[Socket] Presence Error:", err));
+      this.supabaseChannel.track(userData);
     }
   }
 
   public leaveRoom() {
     if (this.supabaseChannel) {
-      console.log(`[Socket] Leaving room ${this.currentRoom}`);
       this.supabaseChannel.unsubscribe();
       this.supabaseChannel = null;
     }
     this.currentRoom = null;
-    this.isConnected = false;
   }
 
   public on(type: string, callback: EventCallback) {
@@ -103,15 +73,10 @@ class SocketEmulator {
   }
 
   public emit(type: string, data: any) {
-    // Debug log
-    if (!type.startsWith('draw:')) { // Reduce noise for drawing
-      console.log(`[Socket] Emit: ${type}`, data);
-    }
-
-    // 1. Local trigger (Logic handling for self)
+    // 1. Local trigger
     this.trigger(type, data);
 
-    // 2. BroadcastChannel trigger (same origin, different tab)
+    // 2. BroadcastChannel trigger (same origin, same device)
     this.localChannel.postMessage({ type, data });
 
     // 3. Supabase trigger (cross device)
@@ -120,9 +85,7 @@ class SocketEmulator {
         type: 'broadcast',
         event: 'sync',
         payload: { type, data }
-      }).catch(err => console.error(`[Socket] Send Error (${type}):`, err));
-    } else {
-      if (!this.currentRoom) console.warn("[Socket] Emit called but not in a room!");
+      });
     }
   }
 
