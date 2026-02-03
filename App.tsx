@@ -122,12 +122,24 @@ const App: React.FC = () => {
     const success = await dataService.deleteSession(sessionId);
     if (success) {
       setSessions(prev => prev.filter(s => s.id !== sessionId));
+    } else {
+      alert("Xóa bài giảng thất bại. Có thể do lỗi kết nối hoặc phân quyền.");
     }
   };
 
   const startPresentation = async (session: Session) => {
-    await dataService.updateSession(session.id, { isActive: true });
-    setCurrentSession({ ...session, isActive: true });
+    // 1. Fetch fresh data to avoid stale slides/state
+    const freshSession = await dataService.getSessionById(session.id);
+    if (!freshSession) {
+      alert("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
+      return;
+    }
+
+    // 2. Mark as active in DB
+    await dataService.updateSession(freshSession.id, { isActive: true });
+
+    // 3. Update local state and view
+    setCurrentSession({ ...freshSession, isActive: true });
     setView('PRESENTATION');
   };
 

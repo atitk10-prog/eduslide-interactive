@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Session, AnswerResponse, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp } from 'lucide-react';
+import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import PDFSlideRenderer from './PDFSlideRenderer';
 import { dataService } from '../services/dataService';
@@ -34,17 +34,44 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [isQuestionActive, setIsQuestionActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [responses, setResponses] = useState<AnswerResponse[]>([]);
-  const [scoreMode, setScoreMode] = useState<'CUMULATIVE' | 'SINGLE'>('CUMULATIVE');
+  const [scoreMode, setScoreMode] = useState<'CUMULATIVE' | 'SINGLE'>(initialSession.scoreMode || 'CUMULATIVE');
   const [manualGrades, setManualGrades] = useState<Record<string, boolean>>({}); // key: questionId_studentName
   const [showStats, setShowStats] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [autoShowLeaderboard, setAutoShowLeaderboard] = useState(true);
   const [showFinalReport, setShowFinalReport] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [studentAlerts, setStudentAlerts] = useState<{ name: string, reason: string, id: number }[]>([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [questionStartTime, setQuestionStartTime] = useState<number | null>(null);
   const [isPresentationStarted, setIsPresentationStarted] = useState(initialSession.isActive);
   const [joinedStudents, setJoinedStudents] = useState<any[]>([]);
   const [isAnswerRevealed, setIsAnswerRevealed] = useState(false);
+  const [showTeacherHint, setShowTeacherHint] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [showQRHeader, setShowQRHeader] = useState(false);
+  const [showSettings, setShowSettingsModal] = useState(false);
+  const [basePoints, setBasePoints] = useState(initialSession.basePoints || 100);
+
+  // Q&A State
+  const [qaQuestions, setQaQuestions] = useState<any[]>([]);
+  const [showQAPanel, setShowQAPanel] = useState(false);
+
+  // Quick Poll State
+  const [quickPoll, setQuickPoll] = useState<any>(null);
+  const [showPollCreator, setShowPollCreator] = useState(false);
+
+  // Real-time Drawing State
+  const [paths, setPaths] = useState<any[]>([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [brushColor, setBrushColor] = useState('#6366f1');
+  const [brushWidth, setBrushWidth] = useState(4);
+  const [isEraser, setIsEraser] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
   const timerRef = useRef<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const currentSlide = session.slides[currentSlideIndex];
   const activeQuestion = currentSlide?.questions[0];
@@ -86,13 +113,13 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         scores[resp.studentName].correctAnswers++;
 
         // Base points
-        let points = 100;
+        let points = basePoints;
 
-        // Bonus points for speed (up to 50 based on remaining time)
+        // Bonus points for speed (up to 50% of base points based on remaining time)
         if (questionStartTime && q.duration) {
           const responseTime = (resp.timestamp - questionStartTime) / 1000;
           const timeLeftPercent = Math.max(0, (q.duration - responseTime) / q.duration);
-          points += Math.round(timeLeftPercent * 50);
+          points += Math.round(timeLeftPercent * (basePoints / 2));
         }
 
         scores[resp.studentName].score += points;
@@ -157,10 +184,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             stopTimer();
             setIsQuestionActive(false);
             socket.emit('question:state', { isActive: false, questionId: null, isTimeout: true });
-
-            // Always show stats first, don't jump to leaderboard
-            setShowStats(true);
-            setIsAnswerRevealed(false);
+            revealAnswer(); // Auto-reveal on timeout
             return 0;
           }
           return prev - 1;
@@ -179,8 +203,48 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setQuestionStartTime(null);
       socket.emit('question:state', { isActive: false, questionId: null });
       dataService.updateSession(session.id, { activeQuestionId: null });
-      setShowStats(true);
-      setIsAnswerRevealed(false);
+      revealAnswer(); // Auto-reveal
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.error(`Error: ${err.message}`);
+      });
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    }
+  };
+
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: "always" } as any,
+        audio: false
+      });
+      setScreenStream(stream);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+
+      stream.getVideoTracks()[0].onended = () => {
+        stopScreenShare();
+      };
+    } catch (err) {
+      console.error("Error sharing screen:", err);
+    }
+  };
+
+  const stopScreenShare = () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      setScreenStream(null);
     }
   };
 
@@ -196,6 +260,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       correctAnswer: activeQuestion.correctAnswer,
       leaderboard
     });
+    setShowStats(true); // Show per-question stats for teacher
   };
 
   const changeSlide = useCallback((newIndex: number) => {
@@ -236,16 +301,188 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setJoinedStudents(students);
     };
 
+    const handleQASubmit = (data: any) => {
+      const { question } = data;
+      setQaQuestions(prev => {
+        const updated = [...prev, question];
+        socket.emit('qa:update', { questions: updated, roomCode: session.roomCode });
+        return updated;
+      });
+    };
+
+    const handleQAUpvote = (data: any) => {
+      const { questionId, studentName } = data;
+      setQaQuestions(prev => {
+        const updated = prev.map(q => {
+          if (q.id === questionId) {
+            const upvotes = q.upvotes.includes(studentName)
+              ? q.upvotes.filter((n: string) => n !== studentName)
+              : [...q.upvotes, studentName];
+            return { ...q, upvotes };
+          }
+          return q;
+        });
+        socket.emit('qa:update', { questions: updated, roomCode: session.roomCode });
+        return updated;
+      });
+    };
+
+    const handlePollResponse = (data: any) => {
+      const { studentName, option } = data;
+      setQuickPoll((prev: any) => {
+        if (!prev) return null;
+        const updated = { ...prev, responses: { ...prev.responses, [studentName]: option } };
+        // We don't need to broadcast back the whole poll state every time if students just send responses
+        // But the teacher needs to see it.
+        return updated;
+      });
+    };
+
     socket.on('answer:submit', handleAnswer);
     socket.on('presence:sync', handlePresenceSync);
+    socket.on('qa:submit', handleQASubmit);
+    socket.on('qa:upvote', handleQAUpvote);
+    const handleStudentAlert = (data: { name: string, reason: string }) => {
+      const id = Date.now();
+      setStudentAlerts(prev => [...prev, { ...data, id }]);
+      setTimeout(() => {
+        setStudentAlerts(prev => prev.filter(a => a.id !== id));
+      }, 5000);
+    };
+
+    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      dataService.syncOfflineData();
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    socket.on('student:alert', handleStudentAlert);
+    socket.on('poll:response', handlePollResponse);
+
+    // Fetch historical data
+    const fetchHistory = async () => {
+      const respHistory = await dataService.getResponses(session.id);
+      if (respHistory.length > 0) setResponses(respHistory);
+
+      const qaHistory = await dataService.getQAQuestions(session.id);
+      if (qaHistory.length > 0) {
+        setQaQuestions(qaHistory.map(q => ({
+          id: q.id,
+          studentName: q.student_name,
+          content: q.content,
+          timestamp: q.timestamp,
+          upvotes: q.upvotes || [],
+          isAnswered: q.is_answered,
+          isFeatured: q.is_featured
+        })));
+      }
+
+      const pollHistory = await dataService.getPolls(session.id);
+      const activePoll = pollHistory.find(p => p.is_active);
+      if (activePoll) {
+        setQuickPoll({
+          id: activePoll.id,
+          prompt: activePoll.prompt,
+          options: activePoll.options,
+          responses: activePoll.responses || {}
+        });
+      }
+    };
+    fetchHistory();
 
     return () => {
       socket.off('answer:submit', handleAnswer);
       socket.off('presence:sync', handlePresenceSync);
+      socket.off('qa:submit', handleQASubmit);
+      socket.off('qa:upvote', handleQAUpvote);
+      socket.off('poll:response', handlePollResponse);
       socket.leaveRoom();
       stopTimer();
+      stopScreenShare();
     };
   }, [session, currentSlideIndex, isPresentationStarted]);
+
+  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    setIsDrawing(true);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
+    const y = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+
+    const newPath = {
+      points: [{ x, y }],
+      color: isEraser ? '#00000000' : brushColor,
+      width: brushWidth,
+      isEraser
+    };
+
+    setPaths(prev => [...prev, newPath]);
+    socket.emit('draw:start', { path: newPath, roomCode: session.roomCode });
+  };
+
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
+    const y = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+
+    setPaths(prev => {
+      const lastPath = prev[prev.length - 1];
+      if (!lastPath) return prev;
+      const updatedPath = { ...lastPath, points: [...lastPath.points, { x, y }] };
+      return [...prev.slice(0, -1), updatedPath];
+    });
+
+    socket.emit('draw:move', { point: { x, y }, roomCode: session.roomCode });
+
+    // Physical drawing on teacher canvas
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const lastPath = paths[paths.length - 1];
+      if (lastPath && lastPath.points.length > 0) {
+        const lastPoint = lastPath.points[lastPath.points.length - 1];
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.x, lastPoint.y);
+        ctx.lineTo(x, y);
+        ctx.strokeStyle = isEraser ? 'black' : brushColor;
+        ctx.lineWidth = brushWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
+        ctx.stroke();
+      }
+    }
+  };
+
+  const stopDrawing = () => {
+    if (isDrawing) {
+      setIsDrawing(false);
+      socket.emit('draw:end', { roomCode: session.roomCode });
+    }
+  };
+
+  const clearCanvas = () => {
+    setPaths([]);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    socket.emit('draw:clear', { roomCode: session.roomCode });
+  };
+
+  useEffect(() => {
+    // Clear paths on slide change
+    clearCanvas();
+  }, [currentSlideIndex]);
 
   const startPresentation = () => {
     setIsPresentationStarted(true);
@@ -284,37 +521,354 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           <LucideUsers className="w-4 h-4 text-indigo-400" />
           <span>{activeStudents.size} Học sinh</span>
         </div>
-        <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+
+        <div className="flex gap-2">
           <button
-            onClick={() => setScoreMode('CUMULATIVE')}
-            className={`px-3 py-1 rounded-lg text-[10px] font-black transition-all ${scoreMode === 'CUMULATIVE' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+            onClick={toggleFullscreen}
+            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 text-[10px] font-black uppercase transition-all border border-white/10"
+            title="Toàn màn hình"
           >
-            CỘNG DỒN
+            {isFullscreen ? <LucideMinimize2 className="w-4 h-4" /> : <LucideMaximize2 className="w-4 h-4" />}
+            <span className="hidden sm:inline">PHÓNG TO</span>
           </button>
+
           <button
-            onClick={() => setScoreMode('SINGLE')}
-            className={`px-3 py-1 rounded-lg text-[10px] font-black transition-all ${scoreMode === 'SINGLE' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+            onClick={screenStream ? stopScreenShare : startScreenShare}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border ${screenStream ? 'bg-red-500/20 border-red-500/50 text-red-400 hover:bg-red-500/30' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'}`}
+            title="Chia sẻ màn hình"
           >
-            TỪNG CÂU
+            {screenStream ? <LucideMonitorOff className="w-4 h-4" /> : <LucideScreenShare className="w-4 h-4" />}
+            <span className="hidden sm:inline">{screenStream ? 'DỪNG CHIA SẺ' : 'CHIA SẺ MH'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 text-[10px] font-black uppercase transition-all border border-white/10"
+            title="Cài đặt tính điểm"
+          >
+            <LucideSettings className="w-4 h-4" />
+            <span className="hidden sm:inline">CÀI ĐẶT</span>
           </button>
         </div>
-        <div className="bg-indigo-600 px-6 py-2 rounded-xl border border-indigo-400">
+        <div className="bg-indigo-600 px-6 py-2 rounded-xl border border-indigo-400 flex items-center gap-4 relative">
           <span className="text-white font-black text-xl tracking-tighter">PHÒNG: {session.roomCode}</span>
+          <button
+            onClick={() => setShowQRHeader(!showQRHeader)}
+            className="p-1 bg-white/20 hover:bg-white/40 rounded-lg transition-all"
+            title="Hiện mã QR để học sinh vào phòng"
+          >
+            <LucideMaximize2 className="w-4 h-4 text-white" />
+          </button>
+
+          {showQRHeader && (
+            <div className="absolute top-full mt-4 right-0 p-4 bg-white rounded-3xl shadow-2xl border-4 border-indigo-600 z-[100] animate-in zoom-in-95">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/?room=${session.roomCode}`)}`}
+                alt="QR Code"
+                className="w-40 h-40 rounded-xl"
+              />
+              <p className="text-[10px] font-black text-indigo-600 text-center mt-2 uppercase tracking-widest">Quét để vào phòng</p>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Main Stage */}
       <div className="flex-1 relative flex items-center justify-center bg-black p-10 overflow-hidden">
-        {currentSlide.pdfSource ? (
-          <div className="w-full h-full flex items-center justify-center">
-            <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
+        {/* Drawing Controls (Floating) */}
+        {isPresentationStarted && (
+          <div className="absolute top-1/2 -translate-y-1/2 left-6 z-40 flex flex-col gap-3 bg-slate-900/90 backdrop-blur-xl p-3 rounded-[2rem] border border-white/10 shadow-2xl">
+            <button
+              onClick={() => setIsEraser(false)}
+              className={`p-4 rounded-2xl transition-all ${!isEraser ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <LucidePencil className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setIsEraser(true)}
+              className={`p-4 rounded-2xl transition-all ${isEraser ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <LucideEraser className="w-5 h-5" />
+            </button>
+            <div className="w-full h-px bg-white/10 my-1" />
+            {['#ef4444', '#10b981', '#6366f1', '#f59e0b', '#ffffff'].map(color => (
+              <button
+                key={color}
+                onClick={() => { setBrushColor(color); setIsEraser(false); }}
+                className={`w-10 h-10 rounded-full border-2 transition-all ${brushColor === color && !isEraser ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-60 hover:opacity-100'}`}
+                style={{ backgroundColor: color }}
+              />
+            ))}
+            <div className="w-full h-px bg-white/10 my-1" />
+            <div className="flex flex-col gap-2 items-center">
+              {[2, 4, 8].map(size => (
+                <button
+                  key={size}
+                  onClick={() => setBrushWidth(size)}
+                  className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all ${brushWidth === size ? 'bg-white text-slate-900 border-white font-black text-xs' : 'text-slate-400 border-white/10 hover:border-white/30 text-[10px]'}`}
+                >
+                  {size === 2 ? 'S' : size === 4 ? 'M' : 'L'}
+                </button>
+              ))}
+            </div>
+            <div className="w-full h-px bg-white/10 my-1" />
+            <button
+              onClick={clearCanvas}
+              className="p-4 text-red-400 hover:bg-red-500/10 rounded-2xl transition-all"
+              title="Xoá tất cả vẽ"
+            >
+              <LucideTrash2 className="w-5 h-5" />
+            </button>
           </div>
-        ) : (
-          <img key={currentSlide.id} src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-lg shadow-2xl" />
         )}
 
+        {/* Q&A Side Panel (Teacher View) */}
+        {showQAPanel && (
+          <div className="absolute top-40 right-10 w-80 bg-slate-900/90 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col shadow-2xl z-50 animate-in slide-in-from-right-5 overflow-hidden">
+            <div className="p-5 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-sm font-black text-white flex items-center gap-2">
+                <LucideMessageCircle className="w-4 h-4 text-indigo-400" /> CÂU HỎI Q&A ({qaQuestions.length})
+              </h3>
+              <button onClick={() => setShowQAPanel(false)} className="p-2 hover:bg-white/10 rounded-full text-slate-400 border border-white/5">
+                <LucideX className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              {qaQuestions.length === 0 ? (
+                <div className="py-20 text-center opacity-30 flex flex-col items-center gap-3">
+                  <LucideMessageSquare className="w-10 h-10" />
+                  <p className="text-xs font-bold text-white uppercase tracking-widest">Chưa có câu hỏi</p>
+                </div>
+              ) : (
+                qaQuestions.sort((a, b) => b.upvotes.length - a.upvotes.length).map((q) => (
+                  <div key={q.id} className={`p-4 rounded-2xl border transition-all ${q.isFeatured ? 'bg-indigo-600/30 border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.2)]' : 'bg-white/5 border-white/10'}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{q.studentName}</span>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => {
+                            const updated = qaQuestions.map(item => item.id === q.id ? { ...item, isFeatured: !item.isFeatured } : item);
+                            setQaQuestions(updated);
+                            socket.emit('qa:update', { questions: updated, roomCode: session.roomCode });
+                          }}
+                          className={`p-1.5 rounded-lg transition-all ${q.isFeatured ? 'bg-amber-500 text-white' : 'hover:bg-white/10 text-slate-500'}`}
+                          title="Nổi bật câu hỏi"
+                        >
+                          <LucideStar className={`w-3 h-4 ${q.isFeatured ? 'fill-current' : ''}`} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            const updated = qaQuestions.filter(item => item.id !== q.id);
+                            setQaQuestions(updated);
+                            socket.emit('qa:update', { questions: updated, roomCode: session.roomCode });
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-all font-black p-2"
+                        >
+                          <LucideX className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-sm font-bold text-slate-200 leading-snug">{q.content}</p>
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
+                      <div className="flex items-center gap-2 text-slate-400 bg-white/5 px-2 py-1 rounded-lg">
+                        <LucideTrendingUp className="w-3 h-3" />
+                        <span className="text-[10px] font-black">{q.upvotes.length}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const updated = qaQuestions.map(item => item.id === q.id ? { ...item, isAnswered: !item.isAnswered } : item);
+                          setQaQuestions(updated);
+                          socket.emit('qa:update', { questions: updated, roomCode: session.roomCode });
+                        }}
+                        className={`text-[9px] font-black px-3 py-1.5 rounded-full transition-all border-2 ${q.isAnswered ? 'bg-green-500 border-green-500 text-white' : 'border-white/10 text-slate-400 hover:border-white/20'}`}
+                      >
+                        {q.isAnswered ? 'ĐÃ TRẢ LỜI' : 'CHƯA TRẢ LỜI'}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-4 bg-white/5 border-t border-white/10">
+              <p className="text-[9px] font-black text-slate-500 text-center uppercase tracking-widest">Câu hỏi nổi bật sẽ hiển thị với lớp</p>
+            </div>
+          </div>
+        )}
+
+        {/* Featured Question Overlay on Stage */}
+        {qaQuestions.find(q => q.isFeatured) && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-6 z-[60] animate-in slide-in-from-bottom-10 duration-700">
+            <div className="bg-indigo-600 p-8 rounded-[3rem] shadow-[0_30px_60px_-15px_rgba(79,70,229,0.5)] border-4 border-white/20 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32 animate-pulse" />
+              <div className="flex items-center gap-4 mb-4">
+                <div className="bg-amber-400 p-3 rounded-2xl shadow-lg rotate-12 group-hover:rotate-0 transition-transform">
+                  <LucideMessageCircle className="w-6 h-6 text-indigo-900" />
+                </div>
+                <div>
+                  <span className="text-white/60 text-[10px] font-black tracking-[0.2em] uppercase block mb-1">CÂU HỎI ĐANG THẢO LUẬN</span>
+                  <span className="text-white font-black text-sm">{qaQuestions.find(q => q.isFeatured)?.studentName} hỏi:</span>
+                </div>
+              </div>
+              <h2 className="text-2xl font-black text-white leading-tight mb-4 drop-shadow-md">"{qaQuestions.find(q => q.isFeatured)?.content}"</h2>
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2 items-center text-white/80 font-bold text-xs">
+                  <LucideTrendingUp className="w-4 h-4 text-amber-300" />
+                  <span>{qaQuestions.find(q => q.isFeatured)?.upvotes.length} lượt quan tâm</span>
+                </div>
+                <button
+                  onClick={() => {
+                    const updated = qaQuestions.map(q => ({ ...q, isFeatured: false }));
+                    setQaQuestions(updated);
+                    socket.emit('qa:update', { questions: updated, roomCode: session.roomCode });
+                  }}
+                  className="bg-white/10 hover:bg-white/20 text-white px-6 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  ĐÓNG THẢO LUẬN
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Poll Creator / Results Overlay */}
+        {showPollCreator && (
+          <div className="absolute inset-0 z-[70] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-[3rem] w-full max-w-md p-10 shadow-2xl relative overflow-hidden text-slate-900 font-sans">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl -mr-16 -mt-16" />
+              <button onClick={() => setShowPollCreator(false)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full text-slate-400 border border-slate-100 transition-all"><LucideX /></button>
+              <h3 className="text-2xl font-black mb-6 flex items-center gap-3">
+                <LucideChartBar className="text-indigo-600" /> BÌNH CHỌN NHANH
+              </h3>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Lựa chọn phản hồi</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { label: 'Đúng / Sai', options: ['Đúng', 'Sai'] },
+                      { label: 'A / B / C / D', options: ['A', 'B', 'C', 'D'] },
+                      { label: 'Đồng ý / Không', options: ['Đồng ý', 'Không đồng ý'] },
+                      { label: '1 - 5 Sao', options: ['1', '2', '3', '4', '5'] }
+                    ].map((preset, idx) => (
+                      <button
+                        key={idx}
+                        onClick={async () => {
+                          const saved = await dataService.createPoll(session.id, 'Phản hồi ngay!', preset.options);
+                          if (saved) {
+                            const poll = {
+                              id: saved.id,
+                              prompt: 'Phản hồi ngay!',
+                              options: preset.options,
+                              responses: {},
+                              isActive: true
+                            };
+                            setQuickPoll(poll);
+                            socket.emit('poll:start', { poll, roomCode: session.roomCode });
+                            setShowPollCreator(false);
+                          }
+                        }}
+                        className="p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-600 hover:bg-indigo-50 text-sm font-black text-slate-600 transition-all text-center active:scale-95 touch-manipulation"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Active Quick Poll Results on Stage */}
+        {quickPoll && (
+          <div className="absolute inset-0 z-[65] bg-slate-950/90 backdrop-blur-xl flex flex-col items-center justify-center p-10 animate-in zoom-in-95 duration-500">
+            <div className="w-full max-w-4xl flex flex-col items-center">
+              <div className="text-center mb-10">
+                <span className="bg-indigo-600 text-white px-6 py-2 rounded-full text-xs font-black uppercase tracking-widest mb-4 inline-block shadow-lg">BÌNH CHỌN NHANH ĐANG DIỄN RA</span>
+                <h2 className="text-4xl font-black text-white">Hãy chọn phương án của bạn!</h2>
+              </div>
+
+              <div className="w-full grid grid-cols-2 gap-6 mb-12">
+                {quickPoll.options.map((opt: string) => {
+                  const count = Object.values(quickPoll.responses).filter(v => v === opt).length;
+                  const total = Object.keys(quickPoll.responses).length || 1;
+                  const percent = Math.round((count / total) * 100);
+
+                  return (
+                    <div key={opt} className="bg-white/5 border border-white/10 p-8 rounded-[2.5rem] relative overflow-hidden group hover:border-white/20 transition-all">
+                      <div className="absolute bottom-0 left-0 h-2 bg-indigo-500 transition-all duration-1000" style={{ width: `${percent}%` }} />
+                      <div className="flex justify-between items-center mb-4 relative z-10">
+                        <span className="text-2xl font-black text-white">{opt}</span>
+                        <span className="text-4xl font-black text-indigo-400">{percent}%</span>
+                      </div>
+                      <p className="text-slate-400 font-bold text-sm relative z-10 uppercase tracking-widest">{count} Phản hồi</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-4">
+                <button
+                  onClick={async () => {
+                    if (quickPoll) {
+                      await dataService.updatePollActive(quickPoll.id, false);
+                      setQuickPoll(null);
+                      socket.emit('poll:stop', { roomCode: session.roomCode });
+                    }
+                  }}
+                  className="bg-red-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl hover:bg-red-700 transition-all active:scale-95 touch-manipulation"
+                >
+                  KẾT THÚC BÌNH CHỌN
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="relative w-full h-full flex items-center justify-center">
+          {screenStream ? (
+            <div className="w-full h-full relative group">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-contain rounded-2xl shadow-2xl border-2 border-white/10"
+              />
+              <div className="absolute top-4 left-4 bg-red-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full flex items-center gap-2 animate-pulse">
+                <div className="w-2 h-2 bg-white rounded-full" /> ĐANG CHIA SẺ MÀN HÌNH
+              </div>
+            </div>
+          ) : currentSlide.pdfSource ? (
+            <div className="w-full h-full flex items-center justify-center">
+              <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
+            </div>
+          ) : (
+            <img key={currentSlide.id} src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-lg shadow-2xl" />
+          )}
+
+          {/* Drawing Canvas Overlay */}
+          {isPresentationStarted && (
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full z-10 cursor-crosshair touch-none"
+              width={1920}
+              height={1080}
+              onMouseDown={startDrawing}
+              onMouseMove={draw}
+              onMouseUp={stopDrawing}
+              onMouseLeave={stopDrawing}
+              onTouchStart={startDrawing}
+              onTouchMove={draw}
+              onTouchEnd={stopDrawing}
+            />
+          )}
+        </div>
+
         {/* Real-time Response Tracker (Sidebar) */}
-        {isQuestionActive && (
+        {(isQuestionActive || showStats) && (
           <div className="absolute top-40 right-10 w-64 bg-slate-900/80 backdrop-blur-md rounded-[2rem] border border-white/10 p-6 shadow-2xl animate-in slide-in-from-right-5 duration-500 z-20">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trạng thái ( {responses.filter(r => r.questionId === activeQuestion?.id).length} / {joinedStudents.length} )</h4>
@@ -378,37 +932,49 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
               </div>
             </div>
 
-            <div className="absolute bottom-40 left-10 w-full max-w-4xl z-20">
-              <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-[3rem] shadow-2xl border-4 border-white/10 animate-in slide-in-from-bottom-5 max-w-2xl">
+            <div className="absolute bottom-40 left-1/2 -translate-x-1/2 w-full max-w-2xl z-20 px-4">
+              <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-[3rem] shadow-2xl border-4 border-white/10 animate-in slide-in-from-bottom-5 w-full">
                 <div className="flex items-center justify-between mb-4">
                   <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">Câu hỏi hiện tại</span>
-                  {activeQuestion?.type !== QuestionType.SHORT_ANSWER && (
-                    <div className="flex gap-2">
-                      {activeQuestion?.options?.map((_, i) => (
-                        <span key={i} className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-[10px] font-black text-white">{String.fromCharCode(65 + i)}</span>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowTeacherHint(!showTeacherHint)}
+                      className={`px-3 py-1 rounded-lg text-[9px] font-black transition-all ${showTeacherHint ? 'bg-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.4)]' : 'bg-white/10 text-slate-400 hover:bg-white/20'}`}
+                    >
+                      {showTeacherHint ? 'ẨN ĐÁP ÁN GV' : 'XEM ĐÁP ÁN GV'}
+                    </button>
+                    {activeQuestion?.type !== QuestionType.SHORT_ANSWER && (
+                      <div className="flex gap-1 ml-2">
+                        {activeQuestion?.options?.map((_, i) => (
+                          <span key={i} className="w-5 h-5 rounded bg-white/10 flex items-center justify-center text-[9px] font-black text-white">{String.fromCharCode(65 + i)}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <h3 className="text-3xl font-black text-white leading-tight mb-6">{activeQuestion?.prompt}</h3>
 
                 {/* Options Preview for Teacher */}
                 {activeQuestion?.type !== QuestionType.SHORT_ANSWER && (
                   <div className="grid grid-cols-2 gap-3 mt-4">
-                    {activeQuestion?.options?.map((opt, i) => (
-                      <div key={i} className={`p-4 rounded-2xl border-2 flex items-center justify-between ${activeQuestion.correctAnswer === opt ? 'bg-green-500/20 border-green-500/50 text-green-400' : 'bg-white/5 border-white/10 text-slate-300'}`}>
-                        <div className="flex items-center gap-3">
-                          <span className="w-6 h-6 rounded-lg bg-black/30 flex items-center justify-center text-[10px] font-black">{String.fromCharCode(65 + i)}</span>
-                          <span className="text-sm font-bold">{opt}</span>
+                    {activeQuestion?.options?.map((opt, i) => {
+                      const isCorrect = activeQuestion.correctAnswer === opt;
+                      const showAsCorrect = isCorrect && (showTeacherHint || isAnswerRevealed);
+                      return (
+                        <div key={i} className={`p-4 rounded-2xl border-2 flex items-center justify-between transition-all duration-300 ${showAsCorrect ? 'bg-green-500/20 border-green-500/50 text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'bg-white/5 border-white/10 text-slate-300'}`}>
+                          <div className="flex items-center gap-3">
+                            <span className="w-6 h-6 rounded-lg bg-black/30 flex items-center justify-center text-[10px] font-black">{String.fromCharCode(65 + i)}</span>
+                            <span className="text-sm font-bold">{opt}</span>
+                          </div>
+                          {showAsCorrect && <LucideCheckCircle2 className="w-4 h-4 animate-in zoom-in" />}
                         </div>
-                        {activeQuestion.correctAnswer === opt && <LucideCheckCircle2 className="w-4 h-4" />}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
-                {activeQuestion?.type === QuestionType.SHORT_ANSWER && activeQuestion.correctAnswer && (
-                  <div className="mt-4 p-4 bg-green-500/10 border-2 border-green-500/30 rounded-2xl flex items-center gap-3">
+                {activeQuestion?.type === QuestionType.SHORT_ANSWER && activeQuestion.correctAnswer && (showTeacherHint || isAnswerRevealed) && (
+                  <div className="mt-4 p-4 bg-green-500/10 border-2 border-green-500/30 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
                     <LucideCheckCircle2 className="w-5 h-5 text-green-400" />
                     <div>
                       <span className="text-[10px] font-black text-green-400 uppercase tracking-widest block">Đáp án đúng (Hệ thống tự rà soát)</span>
@@ -659,13 +1225,24 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         {/* Lobby Overlay */}
         {!isPresentationStarted && (
           <div className="absolute inset-0 bg-slate-900 z-[60] flex flex-col items-center justify-center p-10 animate-in fade-in duration-500">
-            <div className="text-center mb-12 space-y-4">
-              <div className="bg-indigo-600 text-white inline-block px-10 py-6 rounded-[3rem] shadow-2xl border-4 border-indigo-400 mb-6">
-                <p className="text-xs font-black uppercase tracking-[0.3em] opacity-70 mb-2">Mã phòng học</p>
-                <h2 className="text-8xl font-black tracking-tighter">{session.roomCode}</h2>
+            <div className="flex flex-col md:flex-row items-center gap-10 mb-12">
+              <div className="text-center md:text-left space-y-4">
+                <div className="bg-indigo-600 text-white inline-block px-10 py-6 rounded-[3rem] shadow-2xl border-4 border-indigo-400 mb-6">
+                  <p className="text-xs font-black uppercase tracking-[0.3em] opacity-70 mb-2">Mã phòng học</p>
+                  <h2 className="text-8xl font-black tracking-tighter">{session.roomCode}</h2>
+                </div>
+                <h1 className="text-4xl font-black text-white italic">{session.title}</h1>
+                <p className="text-slate-400 font-bold uppercase tracking-widest">Đang chờ học sinh tham gia...</p>
               </div>
-              <h1 className="text-4xl font-black text-white italic">{session.title}</h1>
-              <p className="text-slate-400 font-bold uppercase tracking-widest">Đang chờ học sinh tham gia...</p>
+
+              <div className="bg-white p-6 rounded-[3rem] shadow-2xl rotate-3 hover:rotate-0 transition-transform duration-500">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.origin}/?room=${session.roomCode}`)}`}
+                  alt="Lobby QR"
+                  className="w-48 h-48 rounded-2xl"
+                />
+                <p className="text-[10px] font-black text-indigo-600 text-center mt-3 uppercase tracking-widest">Quét để vào ngay 🚀</p>
+              </div>
             </div>
 
             <div className="w-full max-w-4xl bg-white/5 backdrop-blur-md rounded-[3rem] p-10 border border-white/10">
@@ -704,6 +1281,192 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </div>
           </div>
         )}
+
+        {/* Settings Modal */}
+        {showSettings && (
+          <div className="absolute inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-[3rem] w-full max-w-md p-10 shadow-2xl relative overflow-hidden text-slate-900 font-sans">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl -mr-16 -mt-16" />
+              <button onClick={() => setShowSettingsModal(false)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full text-slate-400 border border-slate-100 transition-all"><LucideX /></button>
+
+              <h3 className="text-2xl font-black mb-8 flex items-center gap-3">
+                <LucideSettings className="text-indigo-600" /> CÀI ĐẶT BUỔI HỌC
+              </h3>
+
+              <div className="space-y-8">
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Chế độ tính điểm</label>
+                  <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-100 rounded-2xl">
+                    <button
+                      onClick={() => {
+                        setScoreMode('CUMULATIVE');
+                        dataService.updateSession(session.id, { scoreMode: 'CUMULATIVE' });
+                      }}
+                      className={`py-4 rounded-xl text-xs font-black transition-all ${scoreMode === 'CUMULATIVE' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                    >
+                      CỘNG DỒN
+                    </button>
+                    <button
+                      onClick={() => {
+                        setScoreMode('SINGLE');
+                        dataService.updateSession(session.id, { scoreMode: 'SINGLE' });
+                      }}
+                      className={`py-4 rounded-xl text-xs font-black transition-all ${scoreMode === 'SINGLE' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                    >
+                      TỪNG CÂU
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-bold italic">
+                    * {scoreMode === 'CUMULATIVE' ? 'Điểm của học sinh sẽ được cộng dồn qua tất cả các slide.' : 'Chỉ tính điểm cho câu hỏi đang mở trên slide hiện tại.'}
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Điểm cơ bản (Mỗi câu đúng)</label>
+                  <div className="flex items-center gap-4">
+                    <input
+                      type="range"
+                      min="10"
+                      max="1000"
+                      step="10"
+                      value={basePoints}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setBasePoints(val);
+                        dataService.updateSession(session.id, { basePoints: val } as any);
+                      }}
+                      className="flex-1 accent-indigo-600"
+                    />
+                    <span className="w-16 text-center font-black text-indigo-600 bg-indigo-50 py-2 rounded-lg border border-indigo-100">{basePoints}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-bold italic">
+                    * Điểm thưởng tốc độ sẽ được tính thêm tối đa 50% số điểm này.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="w-full bg-slate-900 text-white py-5 rounded-[1.5rem] font-black shadow-xl hover:bg-slate-800 transition-all active:scale-95 mt-4"
+                >
+                  ĐÓNG CÀI ĐẶT
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Security Alerts (Toasts) */}
+        <div className="fixed top-8 right-8 z-[200] flex flex-col gap-3">
+          {studentAlerts.map(alert => (
+            <div key={alert.id} className="bg-red-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-right duration-300 border border-red-400">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center shrink-0">
+                <LucideAlertTriangle className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase opacity-70">CẢNH BÁO VI PHẠM</p>
+                <p className="text-sm font-bold">
+                  <span className="text-yellow-300">{alert.name}</span> vừa {
+                    alert.reason === 'COPY' ? 'SAO CHÉP NỘI DUNG' :
+                      alert.reason === 'TAB_SWITCH' ? 'CHUYỂN TAB/ỨNG DỤNG' :
+                        'CHỤP ẢNH MÀN HÌNH'
+                  }
+                </p>
+              </div>
+            </div>
+          ))}
+          {!isOnline && (
+            <div className="bg-amber-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-right duration-300">
+              <LucideWifiOff className="w-5 h-5" />
+              <p className="text-sm font-bold uppercase">Mất kết nối Internet - Đang chờ đồng bộ</p>
+            </div>
+          )}
+        </div>
+
+        {/* Detailed Report Modal */}
+        {showReportModal && (
+          <div className="absolute inset-0 z-[110] bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-300">
+            <div className="bg-white rounded-[3rem] w-full max-w-5xl h-[80vh] flex flex-col shadow-2xl relative overflow-hidden text-slate-900 font-sans">
+              <div className="p-8 border-b flex justify-between items-center bg-slate-50">
+                <div>
+                  <h3 className="text-2xl font-black flex items-center gap-3">
+                    <LucideFlag className="text-indigo-600" /> BÁO CÁO CHI TIẾT BUỔI HỌC
+                  </h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Tổng cộng {responses.length} lượt phản hồi</p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={exportToCSV}
+                    className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-[10px] font-black hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
+                  >
+                    <LucideDownload className="w-4 h-4" /> XUẤT CSV
+                  </button>
+                  <button onClick={() => setShowReportModal(false)} className="p-3 hover:bg-slate-200 rounded-full text-slate-400 transition-all border border-slate-200"><LucideX /></button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                <div className="space-y-10">
+                  {session.slides.map((s, sIdx) => {
+                    const slideQuestions = s.questions || [];
+                    if (slideQuestions.length === 0) return null;
+
+                    return (
+                      <div key={s.id} className="space-y-4">
+                        <div className="flex items-center gap-3 border-l-4 border-indigo-600 pl-4">
+                          <span className="text-3xl font-black text-slate-200">{sIdx + 1}</span>
+                          <h4 className="font-black text-slate-800 uppercase tracking-tight">{s.title || `Slide ${sIdx + 1}`}</h4>
+                        </div>
+
+                        {slideQuestions.map((q) => {
+                          const qResponses = responses.filter(r => r.questionId === q.id);
+                          return (
+                            <div key={q.id} className="bg-slate-50 rounded-[2rem] p-6 border border-slate-100">
+                              <div className="flex justify-between items-start mb-6">
+                                <p className="font-bold text-slate-700 max-w-2xl">{q.prompt}</p>
+                                <span className="bg-white px-4 py-1.5 rounded-full text-[10px] font-black text-indigo-500 border border-indigo-100">{qResponses.length} PHẢN HỒI</span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {qResponses.length === 0 ? (
+                                  <p className="text-xs text-slate-400 italic col-span-full">Chưa có câu trả lời nào cho câu hỏi này.</p>
+                                ) : qResponses.map((r, rIdx) => {
+                                  let isCorrect = false;
+                                  if (q.type === QuestionType.SHORT_ANSWER) {
+                                    const studentAns = String(r.answer || '').trim().toLowerCase();
+                                    const correctAns = String(q.correctAnswer).trim().toLowerCase();
+                                    isCorrect = studentAns === correctAns;
+                                  } else {
+                                    isCorrect = JSON.stringify(r.answer) === JSON.stringify(q.correctAnswer);
+                                  }
+
+                                  return (
+                                    <div key={rIdx} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-2">
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase">{r.studentName}</span>
+                                        {isCorrect ? (
+                                          <LucideCheckCircle2 className="w-4 h-4 text-green-500" />
+                                        ) : (
+                                          <LucideX className="w-4 h-4 text-red-500" />
+                                        )}
+                                      </div>
+                                      <p className="text-sm font-bold text-slate-800">
+                                        {typeof r.answer === 'object' ? JSON.stringify(r.answer) : r.answer}
+                                      </p>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -726,7 +1489,49 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
               <span>{isQuestionActive ? 'KẾT THÚC SỚM' : 'BẮT ĐẦU CÂU HỎI'}</span>
             </button>
           )}
-          <button onClick={() => setShowStats(!showStats)} className="flex items-center gap-3 h-16 bg-white/5 text-white px-10 rounded-2xl font-black text-lg hover:bg-white/10 transition-all"><LucideChartBar /> XEM KẾT QUẢ</button>
+
+          <button
+            onClick={() => {
+              const el = document.documentElement;
+              if (document.fullscreenElement) {
+                document.exitFullscreen();
+              } else {
+                el.requestFullscreen();
+                socket.emit('fullscreen:request', {});
+              }
+            }}
+            className="flex items-center gap-3 h-16 bg-white/10 text-white px-8 rounded-2xl font-black text-lg hover:bg-white/20 transition-all shadow-xl"
+            title="Toàn màn hình & Đồng bộ học sinh"
+          >
+            <LucideMaximize2 />
+          </button>
+          <button
+            onClick={() => setShowPollCreator(true)}
+            className="flex items-center gap-3 h-16 bg-amber-500 text-white px-8 rounded-2xl font-black text-lg hover:bg-amber-600 transition-all shadow-xl shadow-amber-900/20"
+            title="Bình chọn nhanh (Flash Poll)"
+          >
+            <LucideTrendingUp />
+          </button>
+          <button
+            onClick={() => setShowQAPanel(!showQAPanel)}
+            className={`flex items-center gap-3 h-16 px-10 rounded-2xl font-black text-lg transition-all relative ${showQAPanel ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white hover:bg-white/10'}`}
+          >
+            <LucideMessageCircle /> Box {qaQuestions.length > 0 && <span className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-slate-900">{qaQuestions.length}</span>}
+          </button>
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="flex items-center gap-3 h-16 bg-white/5 text-slate-400 px-6 rounded-2xl font-black text-lg hover:bg-white/10 hover:text-white transition-all"
+            title="Xem báo cáo chi tiết"
+          >
+            <LucideFlag /> BÁO CÁO
+          </button>
+          <button
+            onClick={() => setShowLeaderboard(!showLeaderboard)}
+            className={`flex items-center gap-3 h-16 px-10 rounded-2xl font-black text-lg transition-all ${showLeaderboard ? 'bg-yellow-500 text-slate-900 shadow-xl' : 'bg-white/5 text-white hover:bg-white/10'}`}
+          >
+            <LucideTrophy /> BXH
+          </button>
+          <button onClick={() => setShowStats(!showStats)} className="flex items-center gap-3 h-16 bg-white/5 text-white px-8 rounded-2xl font-black text-lg hover:bg-white/10 transition-all"><LucideChartBar /> THỐNG KÊ</button>
         </div>
       </div>
     </div >

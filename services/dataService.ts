@@ -57,6 +57,53 @@ export const dataService = {
         }));
     },
 
+    async getSessionById(sessionId: string): Promise<Session | null> {
+        if (isMock) {
+            const sessions = await this.getSessions();
+            return sessions.find(s => s.id === sessionId) || null;
+        }
+
+        const { data: sessionData, error: sessionError } = await supabase
+            .from('edu_sessions')
+            .select(`
+                *,
+                edu_profiles (full_name)
+            `)
+            .eq('id', sessionId)
+            .maybeSingle();
+
+        if (sessionError || !sessionData) return null;
+
+        const { data: slidesData, error: slidesError } = await supabase
+            .from('edu_slides')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('order_index', { ascending: true });
+
+        if (slidesError) return null;
+
+        return {
+            id: sessionData.id,
+            roomCode: sessionData.room_code,
+            title: sessionData.title,
+            currentSlideIndex: sessionData.current_slide_index,
+            isActive: sessionData.is_active,
+            activeQuestionId: sessionData.active_question_id || undefined,
+            storageSize: sessionData.storage_size || 0,
+            createdAt: sessionData.created_at,
+            slides: (slidesData || []).map((sl: any) => ({
+                id: sl.id,
+                title: sl.title,
+                content: sl.content,
+                imageUrl: sl.image_url,
+                pdfSource: sl.pdf_source,
+                pdfPage: sl.pdf_page,
+                questions: sl.questions || []
+            })),
+            responses: []
+        };
+    },
+
     async createSession(session: Omit<Session, 'slides'>, slides: Slide[]): Promise<boolean> {
         const fullSession = { ...session, slides };
         if (isMock) {
@@ -129,6 +176,7 @@ export const dataService = {
         if (data.isActive !== undefined) updateData.is_active = data.isActive;
         if (data.activeQuestionId !== undefined) updateData.active_question_id = data.activeQuestionId;
         if (data.scoreMode !== undefined) updateData.score_mode = data.scoreMode;
+        if ((data as any).basePoints !== undefined) updateData.base_points = (data as any).basePoints;
 
         const { error } = await supabase
             .from('edu_sessions')
@@ -167,6 +215,15 @@ export const dataService = {
         return !error;
     },
 
+    async deleteSlide(slideId: string): Promise<boolean> {
+        if (isMock) return true;
+        const { error } = await supabase
+            .from('edu_slides')
+            .delete()
+            .eq('id', slideId);
+        return !error;
+    },
+
     async deleteSession(sessionId: string): Promise<boolean> {
         if (isMock) {
             const sessions = await this.getSessions();
@@ -188,7 +245,6 @@ export const dataService = {
         return true;
     },
 
-    // --- Responses ---
     async submitResponse(response: AnswerResponse): Promise<boolean> {
         if (isMock) {
             const key = `responses_${response.sessionId}`;
@@ -197,18 +253,60 @@ export const dataService = {
             return true;
         }
 
-        const { error } = await supabase
-            .from('edu_responses')
-            .insert({
-                session_id: response.sessionId,
-                student_name: response.studentName,
-                student_class: (response as any).studentClass || 'N/A',
-                question_id: response.questionId,
-                answer: response.answer,
-                timestamp: response.timestamp
-            });
+        try {
+            const { error } = await supabase
+                .from('edu_responses')
+                .insert({
+                    session_id: response.sessionId,
+                    student_name: response.studentName,
+                    student_class: (response as any).studentClass || 'N/A',
+                    question_id: response.questionId,
+                    answer: response.answer,
+                    timestamp: response.timestamp
+                });
 
-        return !error;
+            if (error) throw error;
+            return true;
+        } catch (err) {
+            console.warn('Network error, buffering response offline:', err);
+            // Save to offline queue
+            const queue = JSON.parse(localStorage.getItem('edu_offline_responses') || '[]');
+            localStorage.setItem('edu_offline_responses', JSON.stringify([...queue, response]));
+            return true; // Return true as it's buffered
+        }
+    },
+
+    async syncOfflineData(): Promise<void> {
+        if (isMock) return;
+        const queue = JSON.parse(localStorage.getItem('edu_offline_responses') || '[]');
+        if (queue.length === 0) return;
+
+        console.log(`Syncing ${queue.length} offline responses...`);
+        const remaining: AnswerResponse[] = [];
+
+        for (const resp of queue) {
+            try {
+                const { error } = await supabase
+                    .from('edu_responses')
+                    .insert({
+                        session_id: resp.sessionId,
+                        student_name: resp.studentName,
+                        student_class: (resp as any).studentClass || 'N/A',
+                        question_id: resp.questionId,
+                        answer: resp.answer,
+                        timestamp: resp.timestamp
+                    });
+                if (error) throw error;
+            } catch (err) {
+                remaining.push(resp);
+            }
+        }
+
+        if (remaining.length === 0) {
+            localStorage.removeItem('edu_offline_responses');
+        } else {
+            localStorage.setItem('edu_offline_responses', JSON.stringify(remaining));
+        }
     },
 
     async getResponses(sessionId: string): Promise<AnswerResponse[]> {
@@ -228,7 +326,7 @@ export const dataService = {
             studentName: r.student_name,
             questionId: r.question_id,
             answer: r.answer,
-            timestamp: new Date(r.timestamp).getTime()
+            timestamp: Number(r.timestamp)
         }));
     },
 
@@ -278,8 +376,102 @@ export const dataService = {
                 pdfPage: s.pdf_page,
                 questions: s.questions || [],
                 order_index: s.order_index
-            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title))
+            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title)),
+            scoreMode: data.score_mode || 'CUMULATIVE',
+            basePoints: data.base_points || 100,
+            autoLeaderboard: data.auto_leaderboard !== false
         } as Session;
+    },
+
+    // --- Q&A Box ---
+    async getQAQuestions(sessionId: string): Promise<any[]> {
+        if (isMock) return [];
+        const { data, error } = await supabase
+            .from('edu_qa_questions')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('timestamp', { ascending: true });
+        return data || [];
+    },
+
+    async submitQAQuestion(sessionId: string, studentName: string, content: string): Promise<any> {
+        if (isMock) return null;
+        const { data, error } = await supabase
+            .from('edu_qa_questions')
+            .insert({
+                session_id: sessionId,
+                student_name: studentName,
+                content: content,
+                timestamp: Date.now()
+            })
+            .select()
+            .single();
+        return data;
+    },
+
+    async upvoteQAQuestion(qaId: string, studentName: string): Promise<boolean> {
+        if (isMock) return true;
+
+        // Fetch current upvotes
+        const { data } = await supabase.from('edu_qa_questions').select('upvotes').eq('id', qaId).single();
+        const currentUpvotes = data?.upvotes || [];
+
+        if (currentUpvotes.includes(studentName)) return true;
+
+        const { error } = await supabase
+            .from('edu_qa_questions')
+            .update({ upvotes: [...currentUpvotes, studentName] })
+            .eq('id', qaId);
+        return !error;
+    },
+
+    // --- Quick Polls ---
+    async getPolls(sessionId: string): Promise<any[]> {
+        if (isMock) return [];
+        const { data, error } = await supabase
+            .from('edu_polls')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('created_at', { ascending: false });
+        return data || [];
+    },
+
+    async createPoll(sessionId: string, prompt: string, options: string[]): Promise<any> {
+        if (isMock) return null;
+        const { data, error } = await supabase
+            .from('edu_polls')
+            .insert({
+                session_id: sessionId,
+                prompt,
+                options,
+                is_active: true
+            })
+            .select()
+            .single();
+        return data;
+    },
+
+    async submitPollResponse(pollId: string, studentName: string, option: string): Promise<boolean> {
+        if (isMock) return true;
+
+        // Fetch current responses
+        const { data } = await supabase.from('edu_polls').select('responses').eq('id', pollId).single();
+        const currentResponses = data?.responses || {};
+
+        const { error } = await supabase
+            .from('edu_polls')
+            .update({ responses: { ...currentResponses, [studentName]: option } })
+            .eq('id', pollId);
+        return !error;
+    },
+
+    async updatePollActive(pollId: string, isActive: boolean): Promise<boolean> {
+        if (isMock) return true;
+        const { error } = await supabase
+            .from('edu_polls')
+            .update({ is_active: isActive })
+            .eq('id', pollId);
+        return !error;
     },
 
     // --- Auth & Profiles ---

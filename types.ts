@@ -57,3 +57,21 @@ export interface User {
   role: 'ADMIN' | 'TEACHER' | 'STUDENT';
   name: string;
 }
+
+export interface QAQuestion {
+  id: string;
+  studentName: string;
+  content: string;
+  timestamp: number;
+  upvotes: string[]; // student names
+  isAnswered: boolean;
+  isFeatured: boolean;
+}
+
+export interface QuickPoll {
+  id: string;
+  prompt: string;
+  options: string[];
+  responses: Record<string, string>; // studentName -> option
+  isActive: boolean;
+}

@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { Session, QuestionType, Slide, Question } from '../types';
-import { LucidePlus, LucidePlay, LucideSettings, LucideUpload, LucideLoader2, LucideCheckCircle, LucideLayers, LucideMessageSquarePlus, LucideX, LucideTrash2, LucideClock, LucideCheck, LucideFileText, LucideImage, LucideArrowRight } from 'lucide-react';
+import { LucidePlus, LucidePlay, LucideSettings, LucideUpload, LucideLoader2, LucideCheckCircle, LucideLayers, LucideMessageSquarePlus, LucideX, LucideTrash2, LucideClock, LucideCheck, LucideFileText, LucideImage, LucideArrowRight, LucideMessageSquare } from 'lucide-react';
 import { pdfjs } from 'react-pdf';
 import PDFSlideRenderer from './PDFSlideRenderer';
 import { dataService } from '../services/dataService';
@@ -282,6 +282,27 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
     updateQuestion(slideIdx, { correctAnswer: newCorrect });
   };
 
+  const handleDeleteSlide = async (slideId: string, idx: number) => {
+    if (!editingSession) return;
+    if (editingSession.slides.length <= 1) {
+      alert("Mỗi bài giảng phải có ít nhất 1 slide.");
+      return;
+    }
+    if (!window.confirm("Bạn có chắc chắn muốn xóa slide này?")) return;
+
+    try {
+      const success = await dataService.deleteSlide(slideId);
+      if (success) {
+        const updatedSlides = editingSession.slides.filter((_, i) => i !== idx);
+        setEditingSession({ ...editingSession, slides: updatedSlides });
+      } else {
+        alert("Xóa slide thất bại.");
+      }
+    } catch (err) {
+      console.error("Delete slide error:", err);
+    }
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-10">
       {/* Header section */}
@@ -351,11 +372,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                 <button onClick={() => setEditingSession(session)} className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-colors">
                   <LucideSettings className="w-5 h-5" />
                 </button>
-                <button onClick={() => {
-                  if (window.confirm('Bạn có chắc chắn muốn xóa bài giảng này?')) {
-                    onDeleteSession(session.id);
-                  }
-                }} className="p-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl border border-red-100 transition-colors">
+                <button onClick={() => onDeleteSession(session.id)} className="p-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl border border-red-100 transition-colors">
                   <LucideTrash2 className="w-5 h-5" />
                 </button>
               </div>
@@ -480,9 +497,24 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                     <div className="flex-1 space-y-4">
                       <div className="flex justify-between items-center">
                         <span className="bg-slate-900 text-white px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Thiết lập câu hỏi</span>
-                        {slide.questions.length > 0 && (
-                          <button onClick={() => removeQuestion(idx)} className="text-red-400 hover:text-red-600 transition-colors"><LucideTrash2 className="w-5 h-5" /></button>
-                        )}
+                        <div className="flex gap-2">
+                          {slide.questions.length > 0 && (
+                            <button
+                              onClick={() => removeQuestion(idx)}
+                              title="Xóa câu hỏi"
+                              className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
+                            >
+                              <LucideMessageSquare className="w-5 h-5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteSlide(slide.id, idx)}
+                            title="Xóa Slide này"
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                          >
+                            <LucideTrash2 className="w-5 h-5" />
+                          </button>
+                        </div>
                       </div>
 
                       {slide.questions.length > 0 ? (

@@ -64,11 +64,48 @@ CREATE TABLE IF NOT EXISTS public.edu_responses (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 2. CẬP NHẬT CÁC TÍNH NĂNG MỚI (An toàn cho dữ liệu cũ)
 ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS score_mode TEXT DEFAULT 'CUMULATIVE';
 ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS auto_leaderboard BOOLEAN DEFAULT true;
+ALTER TABLE public.edu_sessions ADD COLUMN IF NOT EXISTS base_points INTEGER DEFAULT 100;
+ALTER TABLE public.edu_responses ADD COLUMN IF NOT EXISTS student_class TEXT DEFAULT 'N/A';
 ALTER TABLE public.edu_responses ADD COLUMN IF NOT EXISTS is_manual_correct BOOLEAN DEFAULT NULL;
 ALTER TABLE public.edu_profiles ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'email';
+
+-- 2.1 Bảng lưu trữ Q&A
+CREATE TABLE IF NOT EXISTS public.edu_qa_questions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID REFERENCES public.edu_sessions(id) ON DELETE CASCADE NOT NULL,
+  student_name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  upvotes TEXT[] DEFAULT '{}', -- Danh sách tên học sinh upvote
+  is_answered BOOLEAN DEFAULT false,
+  is_featured BOOLEAN DEFAULT false,
+  timestamp BIGINT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- 2.2 Bảng lưu trữ Bình chọn nhanh (Polls)
+CREATE TABLE IF NOT EXISTS public.edu_polls (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID REFERENCES public.edu_sessions(id) ON DELETE CASCADE NOT NULL,
+  prompt TEXT NOT NULL,
+  options TEXT[] NOT NULL,
+  responses JSONB DEFAULT '{}'::jsonb, -- {student_name: option}
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- Bổ sung Real-time cho các bảng mới
+DO $$ 
+BEGIN 
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_qa_questions;
+    EXCEPTION WHEN others THEN END;
+    
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.edu_polls;
+    EXCEPTION WHEN others THEN END;
+END $$;
 
 -- 3. Kích hoạt Real-time (Sử dụng khối DO để tránh lỗi nếu đã tồn tại)
 DO $$ 

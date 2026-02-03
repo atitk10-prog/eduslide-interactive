@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2 } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { supabase } from '../services/supabase';
 import PDFSlideRenderer from './PDFSlideRenderer';
@@ -26,7 +26,27 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [showFireworks, setShowFireworks] = useState(false);
   const [isPresentationStarted, setIsPresentationStarted] = useState(false);
   const [revealData, setRevealData] = useState<any>(null);
+  const [drawingPaths, setDrawingPaths] = useState<any[]>([]);
+  const [stats, setStats] = useState({ correct: 0, incorrect: 0 });
+
+  // Q&A State
+  const [qaQuestions, setQaQuestions] = useState<any[]>([]);
+  const [showQAPanel, setShowQAPanel] = useState(false);
+  const [newQuestion, setNewQuestion] = useState('');
+
+  // Quick Poll State
+  const [quickPoll, setQuickPoll] = useState<any>(null);
+  const [pollSelectedOption, setPollSelectedOption] = useState<string | null>(null);
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const lastPointRef = useRef<{ x: number, y: number } | null>(null);
+  const currentPathRef = useRef<any>(null);
   const timerRef = useRef<number | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showFullscreenNotice, setShowFullscreenNotice] = useState(false);
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [offlineCount, setOfflineCount] = useState(0);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const playDing = () => {
@@ -97,6 +117,86 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
     const handleQuestionReveal = (data: any) => {
       setRevealData(data);
+      if (data.questionId) {
+        const submitted = submittedAnswers[data.questionId];
+        const q = sessionData?.slides[currentSlideIndex]?.questions.find((q: any) => q.id === data.questionId);
+        if (submitted && q) {
+          let isCorrect = false;
+          if (q.type === QuestionType.SHORT_ANSWER) {
+            const studentAns = String(submitted || '').trim().toLowerCase();
+            const correctAns = String(data.correctAnswer).trim().toLowerCase();
+            isCorrect = studentAns === correctAns;
+          } else {
+            isCorrect = JSON.stringify(submitted) === JSON.stringify(data.correctAnswer);
+          }
+
+          setStats(prev => ({
+            correct: prev.correct + (isCorrect ? 1 : 0),
+            incorrect: prev.incorrect + (isCorrect ? 0 : 1)
+          }));
+        }
+      }
+    };
+
+    const handleDrawStart = (data: any) => {
+      const { path } = data;
+      currentPathRef.current = path;
+      lastPointRef.current = path.points[0];
+      setDrawingPaths(prev => [...prev, path]);
+    };
+
+    const handleDrawMove = (data: any) => {
+      const { point } = data;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const ctx = canvas.getContext('2d');
+      if (ctx && lastPointRef.current && currentPathRef.current) {
+        ctx.beginPath();
+        ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+        ctx.lineTo(point.x, point.y);
+        ctx.strokeStyle = currentPathRef.current.isEraser ? 'black' : currentPathRef.current.color;
+        ctx.lineWidth = currentPathRef.current.width;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = currentPathRef.current.isEraser ? 'destination-out' : 'source-over';
+        ctx.stroke();
+      }
+      lastPointRef.current = point;
+      setDrawingPaths(prev => {
+        const last = [...prev];
+        if (last.length > 0) {
+          last[last.length - 1].points.push(point);
+        }
+        return last;
+      });
+    };
+
+    const handleDrawEnd = () => {
+      lastPointRef.current = null;
+      currentPathRef.current = null;
+    };
+
+    const handleDrawClear = () => {
+      setDrawingPaths([]);
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    };
+
+    const handleQAUpdate = (data: any) => {
+      setQaQuestions(data.questions || []);
+    };
+
+    const handlePollStart = (data: any) => {
+      setQuickPoll(data.poll);
+      setPollSelectedOption(null);
+    };
+
+    const handlePollStop = () => {
+      setQuickPoll(null);
     };
 
     const handlePresentationStart = async () => {
@@ -122,7 +222,44 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       }
     };
 
+    const handleFullscreenRequest = () => {
+      setShowFullscreenNotice(true);
+    };
+
+    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      dataService.syncOfflineData();
+    };
+
+    const handleCopy = () => {
+      socket.emit('student:alert', { name: user.name, reason: 'COPY' });
+      setAlertMessage("Hành động sao chép đã được báo cho giáo viên!");
+      setTimeout(() => setAlertMessage(null), 3000);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        socket.emit('student:alert', { name: user.name, reason: 'TAB_SWITCH' });
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'PrintScreen' || (e.ctrlKey && e.key === 'p')) {
+        socket.emit('student:alert', { name: user.name, reason: 'SCREENSHOT' });
+        setAlertMessage("Hành động chụp ảnh/in màn hình đã được báo cho giáo viên!");
+        setTimeout(() => setAlertMessage(null), 3000);
+      }
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('copy', handleCopy);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('keydown', handleKeyDown);
+
     socket.on('slide:change', handleSlideChange);
+    socket.on('fullscreen:request', handleFullscreenRequest);
     socket.on('question:state', handleQuestionState);
     socket.on('session:start', handleSessionStart);
     socket.on('presentation:start', handlePresentationStart);
@@ -131,9 +268,23 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     socket.on('session:end', handleSessionEnd);
     socket.on('feedback:correct', handleFeedbackCorrect);
     socket.on('question:reveal', handleQuestionReveal);
+    socket.on('draw:start', handleDrawStart);
+    socket.on('draw:move', handleDrawMove);
+    socket.on('draw:end', handleDrawEnd);
+    socket.on('draw:clear', handleDrawClear);
+    socket.on('qa:update', handleQAUpdate);
+    socket.on('poll:start', handlePollStart);
+    socket.on('poll:stop', handlePollStop);
 
     return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('copy', handleCopy);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('keydown', handleKeyDown);
+
       socket.off('slide:change', handleSlideChange);
+      socket.off('fullscreen:request', handleFullscreenRequest);
       socket.off('question:state', handleQuestionState);
       socket.off('session:start', handleSessionStart);
       socket.off('presentation:start', handlePresentationStart);
@@ -142,6 +293,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.off('session:end', handleSessionEnd);
       socket.off('feedback:correct', handleFeedbackCorrect);
       socket.off('question:reveal', handleQuestionReveal);
+      socket.off('draw:start', handleDrawStart);
+      socket.off('draw:move', handleDrawMove);
+      socket.off('draw:end', handleDrawEnd);
+      socket.off('draw:clear', handleDrawClear);
+      socket.off('qa:update', handleQAUpdate);
+      socket.off('poll:start', handlePollStart);
+      socket.off('poll:stop', handlePollStop);
       socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -208,17 +366,59 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       })
       .subscribe();
 
+    // Fetch historical data
+    const fetchHistory = async () => {
+      if (sessionData?.id && user.name) {
+        // Responses
+        const history = await dataService.getResponses(sessionData.id);
+        const mine = history.filter(r => r.studentName === user.name);
+        if (mine.length > 0) {
+          const answers: Record<string, any> = {};
+          mine.forEach(r => answers[r.questionId] = r.answer);
+          setSubmittedAnswers(answers);
+        }
+
+        // Q&A
+        const qa = await dataService.getQAQuestions(sessionData.id);
+        setQaQuestions(qa.map(q => ({
+          id: q.id,
+          studentName: q.student_name,
+          content: q.content,
+          timestamp: q.timestamp,
+          upvotes: q.upvotes || [],
+          isAnswered: q.is_answered,
+          isFeatured: q.is_featured
+        })));
+
+        // Polls (detecting currently active poll)
+        const polls = await dataService.getPolls(sessionData.id);
+        const activePoll = polls.find(p => p.is_active);
+        if (activePoll) {
+          setQuickPoll({
+            id: activePoll.id,
+            prompt: activePoll.prompt,
+            options: activePoll.options,
+            responses: activePoll.responses || {}
+          });
+          if (activePoll.responses && activePoll.responses[user.name]) {
+            setPollSelectedOption(activePoll.responses[user.name]);
+          }
+        }
+      }
+    };
+    fetchHistory();
+
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [sessionData?.id]);
+  }, [sessionData?.id, user.name]);
 
   const submitAnswer = async (questionId: string, answer: any) => {
-    if (submittedAnswers[questionId] || isTimeout) return;
+    if (submittedAnswers[questionId] || isTimeout || !sessionData?.id || sessionData.id === 'sess-1') return;
     setSubmittedAnswers(prev => ({ ...prev, [questionId]: answer }));
 
     const response = {
-      sessionId: sessionData?.id || 'sess-1',
+      sessionId: sessionData.id,
       studentName: user.name,
       studentClass: studentClass || 'N/A',
       questionId,
@@ -227,7 +427,16 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     };
 
     socket.emit('answer:submit', response);
-    await dataService.submitResponse(response);
+    const success = await dataService.submitResponse(response);
+    if (!success) {
+      console.error("FAILED TO SAVE TO DB:", response);
+      alert("Lỗi: Không thể lưu câu trả lời vào máy chủ. Vui lòng thử lại.");
+      setSubmittedAnswers(prev => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    }
   };
 
   const handleJoin = async () => {
@@ -241,21 +450,67 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       return;
     }
 
+    // Help iOS/Old browsers with Fullscreen and Audio
+    const element = document.documentElement;
+    const requestFS = element.requestFullscreen || (element as any).webkitRequestFullscreen || (element as any).mozRequestFullScreen || (element as any).msRequestFullscreen;
+
+    if (requestFS) {
+      requestFS.call(element).catch(() => { });
+    }
+
+    // Prime audio
+    playDing();
+
     setSessionData(session);
     setCurrentSlideIndex(session.currentSlideIndex || 0);
-
-    if (session.activeQuestionId) {
-      setIsQuestionActive(true);
-    }
-
-    if (session.isActive) {
-      setIsPresentationStarted(true);
-    }
+    setIsPresentationStarted(session.isActive);
+    if (session.activeQuestionId) setIsQuestionActive(true);
 
     setIsJoined(true);
     socket.joinRoom(roomCode);
     socket.trackPresence({ name: user.name, class: studentClass || 'N/A' });
     socket.emit('session:join', { roomCode, userName: user.name });
+  };
+
+  const submitQAQuestion = async () => {
+    if (!newQuestion.trim() || !sessionData?.id) return;
+
+    // Save to DB first
+    const saved = await dataService.submitQAQuestion(sessionData.id, user.name, newQuestion);
+    if (saved) {
+      const question = {
+        id: saved.id,
+        studentName: user.name,
+        content: newQuestion,
+        timestamp: Date.now(),
+        upvotes: [],
+        isAnswered: false,
+        isFeatured: false
+      };
+      socket.emit('qa:submit', { roomCode, question });
+      setNewQuestion('');
+    } else {
+      alert("Lỗi: Không thể gửi câu hỏi lúc này.");
+    }
+  };
+
+  const submitPollResponse = async (option: string) => {
+    if (!quickPoll || pollSelectedOption) return;
+    setPollSelectedOption(option);
+
+    // Sync to DB
+    await dataService.submitPollResponse(quickPoll.id, user.name, option);
+
+    socket.emit('poll:response', {
+      pollId: quickPoll.id,
+      studentName: user.name,
+      option
+    });
+  };
+
+  const toggleUpvote = async (questionId: string) => {
+    await dataService.upvoteQAQuestion(questionId, user.name);
+    socket.emit('qa:upvote', { roomCode, questionId, studentName: user.name });
   };
 
   if (!isJoined) {
@@ -284,16 +539,39 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     <div className="h-full bg-slate-50 flex flex-col font-sans">
       <div className="bg-white p-4 border-b flex justify-between items-center sticky top-0 z-10 shadow-sm">
         <span className="font-black text-indigo-600 truncate max-w-[150px]">{user.name}</span>
-        {!sessionEnded && (
-          <div className="flex items-center gap-2">
-            {isQuestionActive && (
-              <div className="bg-red-50 text-red-600 px-3 py-1 rounded-full text-xs font-black flex items-center gap-1 animate-pulse border border-red-100">
-                <LucideClock className="w-3 h-3" /> {timeLeft}s
-              </div>
-            )}
-            <span className="bg-slate-100 px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-tight">Slide {currentSlideIndex + 1}</span>
+        <div className="flex items-center gap-2">
+          {!sessionEnded && (
+            <button
+              onClick={() => setShowQAPanel(true)}
+              className="relative p-2 text-slate-400 hover:text-indigo-600 transition-all"
+            >
+              <LucideMessageCircle className="w-5 h-5" />
+              {qaQuestions.length > 0 && (
+                <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border-2 border-white">
+                  {qaQuestions.length}
+                </span>
+              )}
+            </button>
+          )}
+          {!sessionEnded && (
+            <div className="flex items-center gap-2">
+              {isQuestionActive && (
+                <div className="bg-red-50 text-red-600 px-3 py-1 rounded-full text-xs font-black flex items-center gap-1 animate-pulse border border-red-100">
+                  <LucideClock className="w-3 h-3" /> {timeLeft}s
+                </div>
+              )}
+              <span className="bg-slate-100 px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-tight">Slide {currentSlideIndex + 1}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1 ml-2">
+            <div className="bg-green-100 text-green-600 px-2 py-1 rounded-lg text-[10px] font-black border border-green-200">
+              ✔️ {stats.correct}
+            </div>
+            <div className="bg-red-100 text-red-600 px-2 py-1 rounded-lg text-[10px] font-black border border-red-200">
+              ❌ {stats.incorrect}
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
       <div className="flex-1 p-6 flex flex-col items-center overflow-y-auto relative">
@@ -462,20 +740,16 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
                       <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
                       <LucideTrophy className="w-20 h-20 mx-auto mb-4 animate-bounce" />
                       <h2 className="text-4xl font-black mb-2">CHÍNH XÁC!</h2>
-                      <p className="text-xl font-bold opacity-80 mb-6">Bạn thật xuất sắc</p>
-                      <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
-                        <span className="text-xs font-black uppercase tracking-widest block opacity-70">Điểm hiện tại</span>
-                        <span className="text-3xl font-black">{revealData.leaderboard.find((s: any) => s.name === user.name)?.score || 0}</span>
-                      </div>
+                      <p className="text-xl font-bold opacity-80">Bạn thật xuất sắc</p>
                     </div>
                   ) : (
                     <div className="bg-red-500 text-white p-10 rounded-[3rem] text-center shadow-2xl border-4 border-white/20 relative overflow-hidden">
                       <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16" />
                       <LucideX className="w-20 h-20 mx-auto mb-4 animate-pulse" />
                       <h2 className="text-4xl font-black mb-2">CHƯA ĐÚNG!</h2>
-                      <p className="text-xl font-bold opacity-80 mb-6">Đừng nản chí nhé</p>
+                      <p className="text-xl font-bold opacity-80 mb-4">Đừng nản chí nhé</p>
                       <div className="bg-white/20 py-4 rounded-2xl inline-block px-10">
-                        <span className="text-xs font-black uppercase tracking-widest block opacity-70">Đáp án: {Array.isArray(revealData.correctAnswer) ? revealData.correctAnswer.join(', ') : String(revealData.correctAnswer).replace(/[\[\]"]/g, '')}</span>
+                        <span className="text-xs font-black uppercase tracking-widest block opacity-70">Đáp án ĐÚNG: {Array.isArray(revealData.correctAnswer) ? revealData.correctAnswer.join(', ') : String(revealData.correctAnswer).replace(/[\[\]"]/g, '')}</span>
                       </div>
                     </div>
                   );
@@ -496,6 +770,14 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
                   <span className="font-bold">Đang tải slide...</span>
                 </div>
               )}
+
+              {/* Drawing Layer */}
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 w-full h-full z-10 pointer-events-none"
+                width={1920}
+                height={1080}
+              />
             </div>
 
             <div className="bg-indigo-50 border-2 border-indigo-100 p-6 rounded-[2rem] w-full max-w-md text-center">
@@ -535,6 +817,104 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
             <div>
               <h2 className="text-2xl font-black text-slate-800 tracking-tight">Lớp học đang diễn ra</h2>
               <p className="text-slate-500 font-medium mt-3 leading-relaxed">Hãy theo dõi màn hình chính, câu hỏi sẽ tự động xuất hiện khi giáo viên bắt đầu.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Q&A Side Panel (Overlay) */}
+        {showQAPanel && (
+          <div className="absolute inset-0 z-[100] flex animate-in fade-in duration-300">
+            <div className="flex-1 bg-black/40" onClick={() => setShowQAPanel(false)} />
+            <div className="w-full max-w-sm bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+              <div className="p-6 border-b flex items-center justify-between bg-slate-50">
+                <h3 className="font-black text-slate-800 flex items-center gap-2">
+                  <LucideMessageCircle className="text-indigo-600" /> HỎI ĐÁP Q&A
+                </h3>
+                <button onClick={() => setShowQAPanel(false)} className="p-2 hover:bg-slate-200 rounded-full transition-all">
+                  <LucideX className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                {qaQuestions.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-10 opacity-40">
+                    <LucideMessageSquare className="w-12 h-12 mb-4" />
+                    <p className="font-bold text-sm">Chưa có câu hỏi nào.<br />Hãy là người đầu tiên!</p>
+                  </div>
+                ) : (
+                  qaQuestions.sort((a, b) => b.upvotes.length - a.upvotes.length).map((q) => (
+                    <div key={q.id} className={`p-4 rounded-2xl border-2 transition-all ${q.isFeatured ? 'border-indigo-600 bg-indigo-50/50' : 'border-slate-100 bg-white'}`}>
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{q.studentName}</span>
+                        <span className="text-[9px] text-slate-400">{new Date(q.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <p className="text-sm font-bold text-slate-700 mb-3">{q.content}</p>
+                      <div className="flex items-center justify-between">
+                        <button
+                          onClick={() => toggleUpvote(q.id)}
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-black transition-all ${q.upvotes.includes(user.name) ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-red-50'}`}
+                        >
+                          <LucideHeart className={`w-3 h-3 ${q.upvotes.includes(user.name) ? 'fill-current' : ''}`} />
+                          {q.upvotes.length}
+                        </button>
+                        {q.isAnswered && (
+                          <span className="text-[10px] font-black text-green-600 uppercase flex items-center gap-1">
+                            <LucideCheck className="w-3 h-3" /> Đã trả lời
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="p-4 bg-slate-50 border-t">
+                <div className="relative">
+                  <input
+                    value={newQuestion}
+                    onChange={e => setNewQuestion(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && submitQAQuestion()}
+                    placeholder="Gửi câu hỏi của bạn..."
+                    className="w-full p-4 pr-12 rounded-2xl border-2 border-slate-200 outline-none focus:border-indigo-600 font-bold text-sm"
+                  />
+                  <button
+                    onClick={submitQAQuestion}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-indigo-600 hover:bg-white rounded-xl transition-all"
+                  >
+                    <LucideSend className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Poll Overlay (Student View) */}
+        {quickPoll && (
+          <div className="absolute inset-0 z-[150] bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl relative overflow-hidden text-center">
+              <div className="absolute top-0 left-0 w-full h-2 bg-indigo-600" />
+              <h3 className="text-xl font-black text-slate-800 mb-2 uppercase">BÌNH CHỌN NHANH</h3>
+              <p className="text-slate-500 font-bold mb-8 italic">Hãy chọn phương án của bạn!</p>
+
+              <div className="grid grid-cols-1 gap-3">
+                {quickPoll.options.map((opt: string) => (
+                  <button
+                    key={opt}
+                    onClick={() => submitPollResponse(opt)}
+                    disabled={!!pollSelectedOption}
+                    className={`p-5 rounded-2xl border-2 font-black transition-all ${pollSelectedOption === opt ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : pollSelectedOption ? 'bg-slate-50 border-slate-100 text-slate-400 opacity-50' : 'bg-white border-slate-100 text-slate-700 hover:border-indigo-600 hover:bg-indigo-50 active:scale-95 touch-manipulation'}`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+
+              {pollSelectedOption && (
+                <p className="mt-8 text-indigo-600 font-black text-sm animate-pulse">
+                  Đã ghi nhận! Chờ giáo viên kết thúc...
+                </p>
+              )}
             </div>
           </div>
         )}
