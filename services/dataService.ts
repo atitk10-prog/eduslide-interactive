@@ -289,9 +289,6 @@ export const dataService = {
 
         if (!success) return null;
 
-        // 5. Deactivate original session
-        await this.updateSession(sessionId, { isActive: false });
-
         return { ...newSession, slides: original.slides };
     },
 

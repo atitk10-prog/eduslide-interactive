@@ -141,7 +141,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           roomCode: roomCode,
           title: file.name.replace(/\.[^/.]+$/, ""),
           currentSlideIndex: 0,
-          isActive: false,
+          isActive: true,
           responses: [],
           activeQuestionId: null,
           storageSize: file.size,
@@ -219,7 +219,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
             roomCode: roomCode,
             title: imageFiles.length > 1 ? `Bài giảng mới (${imageFiles.length} ảnh)` : imageFiles[0].name.replace(/\.[^/.]+$/, ""),
             currentSlideIndex: 0,
-            isActive: false,
+            isActive: true,
             responses: [],
             activeQuestionId: null,
             storageSize: totalSize,
@@ -309,7 +309,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       {/* Header section */}
       <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tight">Thư viện bài giảng</h1>
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight">DANH SÁCH BÀI GIẢNG</h1>
           <p className="text-slate-500 font-medium">Quản lý slide và gắn câu hỏi tương tác có đếm ngược thời gian.</p>
         </div>
         <div className="flex gap-4">
