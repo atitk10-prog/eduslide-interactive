@@ -406,10 +406,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       </div>
 
       {/* History Section - Inactive Sessions */}
-      {sessions.some(s => s.isActive === false) && (
+      {sessionData.some(s => s.isActive === false) && (
         <div className="animate-in slide-in-from-bottom-10 fade-in duration-500">
           <h3 className="text-xl font-black text-slate-400 mb-6 uppercase tracking-tight flex items-center gap-2">
-            <LucideClock className="w-6 h-6" /> Lịch sử phiên học
+            <LucideLayoutList className="w-6 h-6" /> Kho bài giảng
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 opacity-75 hover:opacity-100 transition-opacity">
             {sessions.filter(s => s.isActive === false).map((session) => (
