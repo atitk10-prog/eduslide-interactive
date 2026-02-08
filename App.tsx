@@ -139,11 +139,47 @@ const App: React.FC = () => {
       // 2. Set the NEW session and view
       setCurrentSession(freshSession);
       setView('PRESENTATION');
+
+      // 3. Save to localStorage for recovery
+      localStorage.setItem('eduslide_active_presentation', JSON.stringify({
+        sessionId: freshSession.id,
+        timestamp: Date.now()
+      }));
     } catch (error) {
       console.error("Error starting presentation:", error);
       alert("Đã xảy ra lỗi khi khởi động trình chiếu.");
     }
   };
+
+  // Auto-recover active presentation on page reload
+  useEffect(() => {
+    const recoverPresentation = async () => {
+      const saved = localStorage.getItem('eduslide_active_presentation');
+      if (!saved || !user || (user.role !== 'TEACHER' && user.role !== 'ADMIN')) return;
+
+      try {
+        const { sessionId, timestamp } = JSON.parse(saved);
+        // Only recover sessions less than 12 hours old
+        if (Date.now() - timestamp > 12 * 60 * 60 * 1000) {
+          localStorage.removeItem('eduslide_active_presentation');
+          return;
+        }
+
+        const session = await dataService.getSessionById(sessionId);
+        if (session && session.isActive) {
+          setCurrentSession(session);
+          setView('PRESENTATION');
+          console.log('Auto-recovered presentation:', sessionId);
+        } else {
+          localStorage.removeItem('eduslide_active_presentation');
+        }
+      } catch (e) {
+        console.error('Error recovering presentation:', e);
+        localStorage.removeItem('eduslide_active_presentation');
+      }
+    };
+    recoverPresentation();
+  }, [user]);
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50">
@@ -210,6 +246,7 @@ const App: React.FC = () => {
             session={currentSession}
             onExit={async () => {
               await dataService.updateSession(currentSession.id, { isActive: false });
+              localStorage.removeItem('eduslide_active_presentation');
               setView('DASHBOARD');
             }}
           />

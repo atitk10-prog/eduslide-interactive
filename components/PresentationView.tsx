@@ -56,6 +56,9 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [isFocusMode, setIsFocusMode] = useState(initialSession.isFocusMode || false);
   const [isSyncingFullscreen, setIsSyncingFullscreen] = useState(false);
 
+  // Focus Mode Tab Tracking
+  const [tabViolations, setTabViolations] = useState<{ name: string, awayAt: number, reported: boolean }[]>([]);
+
   // Q&A State
   const [qaQuestions, setQaQuestions] = useState<any[]>([]);
   const [showQAPanel, setShowQAPanel] = useState(false);
@@ -304,12 +307,12 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         const ctx = canvas.getContext('2d');
 
         if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
-          canvas.width = 480; // Lower res for performance
-          canvas.height = 270; // 16:9 aspect
+          canvas.width = 960; // HD/2 for clear image
+          canvas.height = 540; // 16:9 aspect
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
-          // Lower quality JPEG for reduced bandwidth
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.25);
+          // Medium quality JPEG - balance between clarity and bandwidth
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
           socket.emit('screen:frame', { image: dataUrl });
         }
       }, 500); // 2 FPS
@@ -435,6 +438,21 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       }, 5000);
     };
 
+    const handleStudentTabAway = (data: { name: string, timestamp: number }) => {
+      setTabViolations(prev => {
+        if (prev.find(v => v.name === data.name)) return prev;
+        return [...prev, { name: data.name, awayAt: Date.now(), reported: false }];
+      });
+      // Show alert immediately
+      const id = Date.now() + Math.random();
+      setStudentAlerts(prev => [...prev, { id, name: data.name, reason: 'ĐANG RỜI TAB...' }]);
+      setTimeout(() => setStudentAlerts(prev => prev.filter(a => a.id !== id)), 5000);
+    };
+
+    const handleStudentTabBack = (data: { name: string, timestamp: number }) => {
+      setTabViolations(prev => prev.filter(v => v.name !== data.name));
+    };
+
     const handleOffline = () => setIsOnline(false);
     const handleOnline = () => {
       setIsOnline(true);
@@ -446,6 +464,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
     socket.on('student:alert', handleStudentAlert);
     socket.on('poll:response', handlePollResponse);
+    socket.on('student:tab-away', handleStudentTabAway);
+    socket.on('student:tab-back', handleStudentTabBack);
 
     // Fetch historical data
     const fetchHistory = async () => {
@@ -487,6 +507,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       socket.off('qa:upvote', handleQAUpvote);
       socket.off('poll:response', handlePollResponse);
       socket.off('student:alert', handleStudentAlert);
+      socket.off('student:tab-away', handleStudentTabAway);
+      socket.off('student:tab-back', handleStudentTabBack);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('online', handleOnline);
       socket.leaveRoom();
@@ -494,6 +516,38 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       stopScreenShare();
     };
   }, [session.id, session.roomCode]);
+
+  // Auto-report tab violations after 10 seconds
+  useEffect(() => {
+    if (!isFocusMode || tabViolations.length === 0) return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTabViolations(prev => prev.map(v => {
+        if (!v.reported && (now - v.awayAt) >= 10000) {
+          const id = now + Math.random();
+          setStudentAlerts(alerts => [...alerts, {
+            id,
+            name: v.name,
+            reason: 'RỜI TAB QUÁ 10 GIÂY - VI PHẠM!'
+          }]);
+          setTimeout(() => setStudentAlerts(alerts => alerts.filter(a => a.id !== id)), 8000);
+          return { ...v, reported: true };
+        }
+        return v;
+      }));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isFocusMode, tabViolations.length]);
+
+  // Tick every second to update "Rời tab Xs" counter in realtime
+  const [focusTick, setFocusTick] = useState(0);
+  useEffect(() => {
+    if (!isFocusMode || tabViolations.length === 0) return;
+    const t = setInterval(() => setFocusTick(p => p + 1), 1000);
+    return () => clearInterval(t);
+  }, [isFocusMode, tabViolations.length]);
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     setIsDrawing(true);
@@ -957,6 +1011,63 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           )}
         </div>
 
+        {/* Focus Mode Student Tracking Panel */}
+        {isFocusMode && isPresentationStarted && (
+          <div className="absolute top-4 right-4 w-56 bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl z-30 animate-in slide-in-from-right-5 duration-300 max-h-[70vh] flex flex-col">
+            <div className="p-4 border-b border-white/10">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <h4 className="text-[10px] font-black text-white uppercase tracking-widest">CHẾ ĐỘ TẬP TRUNG</h4>
+              </div>
+              <div className="flex gap-3 text-[9px] font-bold">
+                <span className="text-green-400">{joinedStudents.filter(s => !tabViolations.find(v => v.name === s.name)).length} trong tab</span>
+                <span className="text-red-400">{tabViolations.length} ngoài tab</span>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5 custom-scrollbar">
+              {/* Sort: away students first, then in-tab students */}
+              {[...joinedStudents]
+                .sort((a, b) => {
+                  const aAway = tabViolations.find(v => v.name === a.name);
+                  const bAway = tabViolations.find(v => v.name === b.name);
+                  if (aAway && !bAway) return -1;
+                  if (!aAway && bAway) return 1;
+                  return 0;
+                })
+                .map((student, idx) => {
+                  const violation = tabViolations.find(v => v.name === student.name);
+                  const isAway = !!violation;
+                  const awaySeconds = violation ? Math.floor((Date.now() - violation.awayAt) / 1000) : 0;
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all ${isAway
+                        ? 'bg-red-500/20 border border-red-500/30 animate-pulse'
+                        : 'bg-white/5 border border-transparent'
+                        }`}
+                    >
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${isAway ? 'bg-red-500' : 'bg-green-500'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-bold truncate ${isAway ? 'text-red-300' : 'text-slate-300'}`}>
+                          {student.name}
+                        </p>
+                        {isAway && (
+                          <p className="text-[9px] font-black text-red-400">
+                            Rời tab {awaySeconds}s{violation.reported ? ' ⚠️ VI PHẠM' : ''}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              {joinedStudents.length === 0 && (
+                <p className="text-[10px] text-slate-500 text-center py-4 italic">Chưa có học sinh</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Real-time Response Tracker (Sidebar) */}
         {(isQuestionActive || showStats) && (
           <div className="absolute top-40 right-10 w-64 bg-slate-900/80 backdrop-blur-md rounded-[2rem] border border-white/10 p-6 shadow-2xl animate-in slide-in-from-right-5 duration-500 z-20">
@@ -1100,11 +1211,11 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
             <div className="w-full max-w-4xl h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={statsData}>
+                <BarChart data={statsData.bar}>
                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontWeight: 'bold' }} />
                   <Tooltip cursor={{ fill: '#f1f5f9' }} contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
                   <Bar dataKey="count" radius={[10, 10, 0, 0]}>
-                    {statsData.map((entry, index) => (
+                    {statsData.bar.map((entry: any, index: number) => (
                       <Cell key={`cell-${index}`} fill={isAnswerRevealed ? (entry.isCorrect ? '#10b981' : '#ef4444') : '#6366f1'} />
                     ))}
                   </Bar>
@@ -1499,11 +1610,11 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
               <div>
                 <p className="text-[10px] font-black uppercase opacity-70">CẢNH BÁO VI PHẠM</p>
                 <p className="text-sm font-bold">
-                  <span className="text-yellow-300">{alert.name}</span> vừa {
-                    alert.reason === 'COPY' ? 'SAO CHÉP NỘI DUNG' :
-                      alert.reason === 'TAB_SWITCH' ? 'CHUYỂN TAB/ỨNG DỤNG' :
-                        'CHỤP ẢNH MÀN HÌNH'
-                  }
+                  <span className="text-yellow-300">{alert.name}</span>{' '}
+                  {alert.reason === 'COPY' ? 'vừa SAO CHÉP NỘI DUNG' :
+                    alert.reason === 'TAB_SWITCH' ? 'vừa CHUYỂN TAB/ỨNG DỤNG' :
+                      alert.reason === 'SCREENSHOT' ? 'vừa CHỤP ẢNH MÀN HÌNH' :
+                        alert.reason}
                 </p>
               </div>
             </div>

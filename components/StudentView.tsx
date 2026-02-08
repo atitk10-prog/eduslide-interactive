@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock, LucideSmartphone, LucideRotateCw } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { supabase } from '../services/supabase';
 import PDFSlideRenderer from './PDFSlideRenderer';
@@ -56,6 +56,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isCurrentlyFullscreen, setIsCurrentlyFullscreen] = useState(false);
   const [screenShareImage, setScreenShareImage] = useState<string | null>(null);
+  const [showRotatePrompt, setShowRotatePrompt] = useState(false);
+  const [dismissedRotate, setDismissedRotate] = useState(false);
+  const [focusWarningCountdown, setFocusWarningCountdown] = useState<number | null>(null);
+  const focusTimerRef = useRef<number | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -77,6 +81,35 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     setLevel(newLevel);
     setCurrentXP(xp);
   };
+
+  // Auto-detect portrait mode on mobile and suggest landscape
+  useEffect(() => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (!isMobile) return;
+
+    const checkOrientation = () => {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      if (isPortrait && isPresentationStarted && !dismissedRotate) {
+        setShowRotatePrompt(true);
+      } else {
+        setShowRotatePrompt(false);
+      }
+    };
+
+    checkOrientation();
+    window.addEventListener('resize', checkOrientation);
+    window.addEventListener('orientationchange', checkOrientation);
+
+    // Try to lock landscape when presentation starts
+    if (isPresentationStarted && (screen.orientation as any)?.lock) {
+      (screen.orientation as any).lock('landscape').catch(() => { });
+    }
+
+    return () => {
+      window.removeEventListener('resize', checkOrientation);
+      window.removeEventListener('orientationchange', checkOrientation);
+    };
+  }, [isPresentationStarted, dismissedRotate]);
 
   useEffect(() => {
     const handleSlideChange = (data: any) => {
@@ -364,7 +397,22 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        socket.emit('student:alert', { name: user.name, reason: 'TAB_SWITCH' });
+        // Only alert teacher when focus mode is ON
+        if (isFocusMode) {
+          socket.emit('student:alert', { name: user.name, reason: 'TAB_SWITCH' });
+          socket.emit('student:tab-away', { name: user.name, timestamp: Date.now() });
+        }
+      } else {
+        // Student came back
+        if (isFocusMode) {
+          socket.emit('student:tab-back', { name: user.name, timestamp: Date.now() });
+          // Clear the countdown warning
+          if (focusTimerRef.current) {
+            clearInterval(focusTimerRef.current);
+            focusTimerRef.current = null;
+          }
+          setFocusWarningCountdown(null);
+        }
       }
     };
 
@@ -1119,11 +1167,28 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
         {/* Screen Share Overlay */}
         {screenShareImage && !isQuestionActive && (
-          <div className="absolute inset-0 z-[50] bg-black flex items-center justify-center">
-            <img src={screenShareImage} className="w-full h-full object-contain" alt="Teacher Screen" />
-            <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse flex items-center gap-2">
-              <div className="w-2 h-2 bg-white rounded-full" /> TRỰC TIẾP TỪ GIÁO VIÊN
+          <div className="absolute inset-0 z-[50] bg-slate-950 flex items-center justify-center p-2 sm:p-4">
+            <img src={screenShareImage} className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" alt="Teacher Screen" />
+            <div className="absolute top-2 left-2 sm:top-4 sm:left-4 bg-red-600 text-white px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[10px] sm:text-xs font-black animate-pulse flex items-center gap-1 sm:gap-2">
+              <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-white rounded-full" /> TRỰC TIẾP
             </div>
+          </div>
+        )}
+
+        {/* Mobile Rotate Prompt */}
+        {showRotatePrompt && (
+          <div className="fixed inset-0 z-[200] bg-slate-950/95 backdrop-blur-sm flex flex-col items-center justify-center p-8 animate-in fade-in duration-300">
+            <button
+              onClick={() => { setDismissedRotate(true); setShowRotatePrompt(false); }}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-white/10 transition-all"
+            >
+              <LucideX className="w-5 h-5" />
+            </button>
+            <div className="animate-spin-slow mb-6">
+              <LucideSmartphone className="w-16 h-16 text-indigo-400 rotate-90" />
+            </div>
+            <h3 className="text-white text-lg font-black text-center mb-2">XIN HÃY XOAY NGANG</h3>
+            <p className="text-slate-400 text-sm text-center">Xoay điện thoại ngang để xem bài giảng tốt hơn</p>
           </div>
         )}
 
