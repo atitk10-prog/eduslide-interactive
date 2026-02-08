@@ -1,10 +1,11 @@
 
 import React, { useState, useRef } from 'react';
 import { Session, QuestionType, Slide, Question } from '../types';
-import { LucidePlus, LucidePlay, LucideSettings, LucideUpload, LucideLoader2, LucideCheckCircle, LucideLayers, LucideMessageSquarePlus, LucideX, LucideTrash2, LucideClock, LucideCheck, LucideFileText, LucideImage, LucideArrowRight, LucideMessageSquare } from 'lucide-react';
+import { LucidePlus, LucidePlay, LucideSettings, LucideUpload, LucideLoader2, LucideCheckCircle, LucideLayers, LucideMessageSquarePlus, LucideX, LucideTrash2, LucideClock, LucideCheck, LucideFileText, LucideImage, LucideArrowRight, LucideMessageSquare, LucideSearch, LucideChevronUp, LucideChevronDown, LucideCopy, LucideSave } from 'lucide-react';
 import { pdfjs } from 'react-pdf';
 import PDFSlideRenderer from './PDFSlideRenderer';
 import { dataService } from '../services/dataService';
+import { toast } from './Toast';
 
 const MAX_IMAGE_DIMENSION = 1920;
 const MAX_FILE_SIZE_MB = 10;
@@ -33,6 +34,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
   const [isSaving, setIsSaving] = useState(false);
   const [startingSessionId, setStartingSessionId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterMode, setFilterMode] = useState<'all' | 'active' | 'inactive'>('all');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const autoSaveTimerRef = useRef<number | null>(null);
 
   const formatRelativeTime = (dateStr?: string) => {
     if (!dateStr) return 'N/A';
@@ -96,10 +101,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
     const res = await dataService.updateMyPassword(newPassword);
     setIsUpdatingPassword(false);
     if (res.success) {
-      alert(res.message);
+      toast.success(res.message);
       setNewPassword('');
     } else {
-      alert('Lỗi: ' + res.message);
+      toast.error('Lỗi: ' + res.message);
     }
   };
 
@@ -114,7 +119,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       if (files.length === 1 && files[0].type === 'application/pdf') {
         const file = files[0];
         if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-          alert(`File PDF quá lớn (${(file.size / 1024 / 1024).toFixed(1)}MB). Vui lòng chọn file dưới ${MAX_FILE_SIZE_MB}MB.`);
+          toast.warning(`File PDF quá lớn (${(file.size / 1024 / 1024).toFixed(1)}MB). Vui lòng chọn file dưới ${MAX_FILE_SIZE_MB}MB.`);
           setIsUploading(false);
           return;
         }
@@ -169,7 +174,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
         // Check if any file is too large (> 10MB)
         const oversized = imageFiles.find(f => f.size > MAX_FILE_SIZE_MB * 1024 * 1024);
         if (oversized) {
-          alert(`File "${oversized.name}" quá lớn (${(oversized.size / 1024 / 1024).toFixed(1)}MB). Vui lòng chọn file dưới ${MAX_FILE_SIZE_MB}MB.`);
+          toast.warning(`File "${oversized.name}" quá lớn (${(oversized.size / 1024 / 1024).toFixed(1)}MB). Vui lòng chọn file dưới ${MAX_FILE_SIZE_MB}MB.`);
           return;
         }
 
@@ -236,7 +241,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       }
     } catch (error) {
       console.error('Upload Error:', error);
-      alert('Có lỗi xảy ra trong quá trình tải lên. Vui lòng thử lại.');
+      toast.error('Có lỗi xảy ra trong quá trình tải lên. Vui lòng thử lại.');
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -257,36 +262,39 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
     };
 
     const updatedSlides = [...editingSession.slides];
-    updatedSlides[slideIndex].questions = [newQuestion];
+    updatedSlides[slideIndex].questions = [...updatedSlides[slideIndex].questions, newQuestion];
     setEditingSession({ ...editingSession, slides: updatedSlides });
   };
 
-  const updateQuestion = (slideIndex: number, data: Partial<Question>) => {
+  const updateQuestion = (slideIndex: number, questionIndex: number, data: Partial<Question>) => {
     if (!editingSession) return;
     const updatedSlides = [...editingSession.slides];
-    updatedSlides[slideIndex].questions[0] = { ...updatedSlides[slideIndex].questions[0], ...data };
+    updatedSlides[slideIndex].questions[questionIndex] = { ...updatedSlides[slideIndex].questions[questionIndex], ...data };
     setEditingSession({ ...editingSession, slides: updatedSlides });
   };
 
-  const removeQuestion = (slideIndex: number) => {
+  const removeQuestion = (slideIndex: number, questionIndex: number) => {
     if (!editingSession) return;
+    if (!window.confirm('Bạn có chắc chắn muốn xóa câu hỏi này?')) return;
     const updatedSlides = [...editingSession.slides];
-    updatedSlides[slideIndex].questions = [];
-    setEditingSession({ ...editingSession, slides: updatedSlides });
+    updatedSlides[slideIndex].questions = updatedSlides[slideIndex].questions.filter((_, i) => i !== questionIndex);
+    const updated = { ...editingSession, slides: updatedSlides };
+    setEditingSession(updated);
+    triggerAutoSave(updated);
   };
 
-  const handleTF4CorrectToggle = (slideIdx: number, itemIdx: number, value: string) => {
+  const handleTF4CorrectToggle = (slideIdx: number, qIdx: number, itemIdx: number, value: string) => {
     if (!editingSession) return;
-    const currentQuestion = editingSession.slides[slideIdx].questions[0];
+    const currentQuestion = editingSession.slides[slideIdx].questions[qIdx];
     const currentCorrect = (currentQuestion.correctAnswer as Record<number, string>) || {};
     const newCorrect = { ...currentCorrect, [itemIdx]: value };
-    updateQuestion(slideIdx, { correctAnswer: newCorrect });
+    updateQuestion(slideIdx, qIdx, { correctAnswer: newCorrect });
   };
 
   const handleDeleteSlide = async (slideId: string, idx: number) => {
     if (!editingSession) return;
     if (editingSession.slides.length <= 1) {
-      alert("Mỗi bài giảng phải có ít nhất 1 slide.");
+      toast.warning("Mỗi bài giảng phải có ít nhất 1 slide.");
       return;
     }
     if (!window.confirm("Bạn có chắc chắn muốn xóa slide này?")) return;
@@ -296,13 +304,67 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       if (success) {
         const updatedSlides = editingSession.slides.filter((_, i) => i !== idx);
         setEditingSession({ ...editingSession, slides: updatedSlides });
+        toast.success('Xóa slide thành công');
       } else {
-        alert("Xóa slide thất bại.");
+        toast.error("Xóa slide thất bại.");
       }
     } catch (err) {
       console.error("Delete slide error:", err);
     }
   };
+
+  // --- Slide Reorder ---
+  const moveSlide = (fromIdx: number, direction: 'up' | 'down') => {
+    if (!editingSession) return;
+    const toIdx = direction === 'up' ? fromIdx - 1 : fromIdx + 1;
+    if (toIdx < 0 || toIdx >= editingSession.slides.length) return;
+    const updatedSlides = [...editingSession.slides];
+    [updatedSlides[fromIdx], updatedSlides[toIdx]] = [updatedSlides[toIdx], updatedSlides[fromIdx]];
+    setEditingSession({ ...editingSession, slides: updatedSlides });
+    // Update order_index in DB
+    updatedSlides.forEach((s, i) => dataService.updateSlide(s.id, { order_index: i }));
+  };
+
+  // --- Duplicate Slide ---
+  const duplicateSlide = async (slide: Slide, idx: number) => {
+    if (!editingSession) return;
+    const newSlide = await dataService.createSlide(editingSession.id, {
+      title: slide.title,
+      content: slide.content,
+      imageUrl: slide.imageUrl,
+      pdfSource: slide.pdfSource,
+      pdfPage: slide.pdfPage,
+      questions: slide.questions.map(q => ({ ...q, id: crypto.randomUUID() })),
+      order_index: idx + 1
+    });
+    if (newSlide) {
+      const updatedSlides = [...editingSession.slides];
+      updatedSlides.splice(idx + 1, 0, newSlide);
+      setEditingSession({ ...editingSession, slides: updatedSlides });
+      toast.success('Nhân bản slide thành công');
+    }
+  };
+
+  // --- Auto-save debounce ---
+  const triggerAutoSave = (session: Session) => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    setAutoSaveStatus('saving');
+    autoSaveTimerRef.current = window.setTimeout(async () => {
+      for (const slide of session.slides) {
+        await dataService.updateSlide(slide.id, { questions: slide.questions });
+      }
+      setAutoSaveStatus('saved');
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+    }, 1500);
+  };
+
+  // --- Filtered sessions ---
+  const filteredSessions = sessions.filter(s => {
+    const matchesSearch = s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.roomCode.toLowerCase().includes(searchQuery.toLowerCase());
+    if (filterMode === 'active') return matchesSearch && s.isActive !== false;
+    if (filterMode === 'inactive') return matchesSearch && s.isActive === false;
+    return matchesSearch;
+  });
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-10">
@@ -338,81 +400,140 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
         </div>
       </div>
 
-      {/* Grid section - Active Sessions */}
-      <h3 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tight flex items-center gap-2">
-        <LucidePlay className="w-6 h-6 text-indigo-600" /> Bài giảng đang hoạt động
-      </h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 mb-12">
-        {sessions.filter(s => s.isActive !== false).map((session) => (
-          <div key={session.id} className="group bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500">
-            <div className="aspect-[16/10] bg-slate-100 relative overflow-hidden">
-              {session.slides[0]?.pdfSource ? (
-                <div className="w-full h-full scale-110">
-                  <PDFSlideRenderer url={session.slides[0].pdfSource} pageNumber={session.slides[0].pdfPage || 1} width={400} />
-                </div>
-              ) : (
-                <img src={session.slides[0]?.imageUrl} className="w-full h-full object-cover" alt="Thumb" />
-              )}
-              <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded-xl text-white font-black text-xs tracking-widest">
-                {session.roomCode}
-              </div>
-            </div>
-            <div className="p-6 space-y-4">
-              <h3 className="font-bold text-slate-900 line-clamp-1">{session.title}</h3>
-              <div className="flex flex-col gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1"><LucideLayers className="w-4 h-4" /> {session.slides.length} SLIDES</span>
-                  <span className="flex items-center gap-1"><LucideMessageSquarePlus className="w-4 h-4" /> {session.slides.reduce((acc, s) => acc + s.questions.length, 0)} CÂU HỎI</span>
-                </div>
-                <div className="flex items-center gap-4 text-slate-300">
-                  <span className="flex items-center gap-1"><LucideFileText className="w-3 h-3" /> {formatSize(session.storageSize)}</span>
-                  <span className="flex items-center gap-1"><LucideClock className="w-3 h-3" /> {formatRelativeTime(session.createdAt)}</span>
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button
-                  disabled={startingSessionId !== null}
-                  onClick={async () => {
-                    setStartingSessionId(session.id);
-                    try {
-                      await onStart(session);
-                    } finally {
-                      setStartingSessionId(null);
-                    }
-                  }}
-                  className={`flex-1 ${startingSessionId === session.id ? 'bg-indigo-400' : 'bg-slate-900 hover:bg-indigo-600'} text-white py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50`}
-                >
-                  {startingSessionId === session.id ? <LucideLoader2 className="w-4 h-4 animate-spin" /> : <LucidePlay className="w-4 h-4" />}
-                  {startingSessionId === session.id ? 'ĐANG TẢI...' : 'TRÌNH CHIẾU'}
-                </button>
-                <button onClick={() => setEditingSession(session)} className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-colors">
-                  <LucideSettings className="w-5 h-5" />
-                </button>
-                <button onClick={() => onDeleteSession(session.id)} className="p-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl border border-red-100 transition-colors">
-                  <LucideTrash2 className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+      {/* Search & Filter */}
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+        <div className="relative flex-1 max-w-md">
+          <LucideSearch className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Tìm bài giảng..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 bg-white border-2 border-slate-100 rounded-2xl font-bold text-sm focus:border-indigo-600 outline-none transition-colors"
+          />
+        </div>
+        <div className="flex bg-white p-1 rounded-xl border border-slate-100">
+          {(['all', 'active', 'inactive'] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setFilterMode(mode)}
+              className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${filterMode === mode ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              {mode === 'all' ? 'Tất cả' : mode === 'active' ? 'Đang hoạt động' : 'Lịch sử'}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* Empty State */}
+      {filteredSessions.length === 0 && (
+        <div className="bg-white rounded-[3rem] border-2 border-dashed border-slate-200 p-16 text-center">
+          <div className="inline-block p-6 bg-indigo-50 rounded-full mb-6">
+            <LucideLayers className="w-12 h-12 text-indigo-400" />
+          </div>
+          <h3 className="text-2xl font-black text-slate-700 mb-2">
+            {searchQuery ? 'Không tìm thấy bài giảng' : 'Chưa có bài giảng nào'}
+          </h3>
+          <p className="text-slate-400 font-medium mb-6">
+            {searchQuery ? `Không có kết quả cho "${searchQuery}"` : 'Tải lên PDF hoặc ảnh để tạo bài giảng đầu tiên của bạn!'}
+          </p>
+          {!searchQuery && (
+            <button onClick={() => fileInputRef.current?.click()} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl active:scale-95 inline-flex items-center gap-3">
+              <LucideUpload className="w-5 h-5" /> TẢI SLIDE ĐẦU TIÊN
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Grid section - Active Sessions */}
+      {filteredSessions.filter(s => s.isActive !== false).length > 0 && (
+        <>
+          <h3 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tight flex items-center gap-2">
+            <LucidePlay className="w-6 h-6 text-indigo-600" /> Bài giảng đang hoạt động
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 mb-12">
+            {filteredSessions.filter(s => s.isActive !== false).map((session) => (
+              <div key={session.id} className="group bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500">
+                <div className="aspect-[16/10] bg-slate-100 relative overflow-hidden">
+                  {session.slides[0]?.pdfSource ? (
+                    <div className="w-full h-full scale-110">
+                      <PDFSlideRenderer url={session.slides[0].pdfSource} pageNumber={session.slides[0].pdfPage || 1} width={400} />
+                    </div>
+                  ) : (
+                    <img src={session.slides[0]?.imageUrl} className="w-full h-full object-cover" alt="Thumb" />
+                  )}
+                  <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded-xl text-white font-black text-xs tracking-widest">
+                    {session.roomCode}
+                  </div>
+                </div>
+                <div className="p-6 space-y-4">
+                  <h3 className="font-bold text-slate-900 line-clamp-1">{session.title}</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="bg-green-100 text-green-700 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase">Hoạt động</span>
+                  </div>
+                  <div className="flex flex-col gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    <div className="flex items-center gap-4">
+                      <span className="flex items-center gap-1"><LucideLayers className="w-4 h-4" /> {session.slides.length} SLIDES</span>
+                      <span className="flex items-center gap-1"><LucideMessageSquarePlus className="w-4 h-4" /> {session.slides.reduce((acc, s) => acc + s.questions.length, 0)} CÂU HỎI</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-slate-300">
+                      <span className="flex items-center gap-1"><LucideFileText className="w-3 h-3" /> {formatSize(session.storageSize)}</span>
+                      <span className="flex items-center gap-1"><LucideClock className="w-3 h-3" /> {formatRelativeTime(session.createdAt)}</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      disabled={startingSessionId !== null}
+                      onClick={async () => {
+                        setStartingSessionId(session.id);
+                        try {
+                          await onStart(session);
+                        } finally {
+                          setStartingSessionId(null);
+                        }
+                      }}
+                      className={`flex-1 ${startingSessionId === session.id ? 'bg-indigo-400' : 'bg-slate-900 hover:bg-indigo-600'} text-white py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50`}
+                    >
+                      {startingSessionId === session.id ? <LucideLoader2 className="w-4 h-4 animate-spin" /> : <LucidePlay className="w-4 h-4" />}
+                      {startingSessionId === session.id ? 'ĐANG TẢI...' : 'TRÌNH CHIẾU'}
+                    </button>
+                    <button onClick={() => setEditingSession(session)} className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-colors">
+                      <LucideSettings className="w-5 h-5" />
+                    </button>
+                    <button onClick={() => onDeleteSession(session.id)} className="p-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl border border-red-100 transition-colors">
+                      <LucideTrash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* History Section - Inactive Sessions */}
-      {sessions.some(s => s.isActive === false) && (
+      {filteredSessions.filter(s => s.isActive === false).length > 0 && (
         <div className="animate-in slide-in-from-bottom-10 fade-in duration-500">
           <h3 className="text-xl font-black text-slate-400 mb-6 uppercase tracking-tight flex items-center gap-2">
             <LucideClock className="w-6 h-6" /> Lịch sử phiên học
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 opacity-75 hover:opacity-100 transition-opacity">
-            {sessions.filter(s => s.isActive === false).map((session) => (
+            {filteredSessions.filter(s => s.isActive === false).map((session) => (
               <div key={session.id} className="group bg-slate-50 rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-lg transition-all">
                 <div className="p-6 space-y-4">
                   <div className="flex justify-between items-start">
                     <div>
                       <h3 className="font-bold text-slate-700 line-clamp-1">{session.title}</h3>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                        {formatRelativeTime(session.createdAt)}
-                      </p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="bg-slate-200 text-slate-500 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase">Kết thúc</span>
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          {formatRelativeTime(session.createdAt)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        <span className="flex items-center gap-1"><LucideLayers className="w-3 h-3" /> {session.slides.length} slides</span>
+                        <span className="flex items-center gap-1"><LucideMessageSquarePlus className="w-3 h-3" /> {session.slides.reduce((a, s) => a + s.questions.length, 0)} câu hỏi</span>
+                      </div>
                     </div>
                     <div className="bg-slate-200 px-3 py-1 rounded-lg text-[10px] font-black text-slate-500">
                       {session.roomCode}
@@ -421,7 +542,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => alert("Tính năng xem báo cáo chi tiết đang được phát triển!")}
+                      onClick={() => toast.info("Tính năng xem báo cáo chi tiết đang được phát triển!")}
                       className="flex-1 bg-white border border-slate-200 text-indigo-600 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 hover:bg-indigo-50"
                     >
                       <LucideFileText className="w-4 h-4" /> XEM BÁO CÁO
@@ -444,7 +565,11 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
             <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">Thiết lập bài giảng</h2>
-                <p className="text-sm text-slate-500 font-medium">Tùy chỉnh thông tin và câu hỏi tương tác.</p>
+                <div className="flex items-center gap-3">
+                  <p className="text-sm text-slate-500 font-medium">Tùy chỉnh thông tin và câu hỏi tương tác.</p>
+                  {autoSaveStatus === 'saving' && <span className="text-[10px] font-black text-amber-500 flex items-center gap-1 animate-pulse"><LucideLoader2 className="w-3 h-3 animate-spin" /> Đang lưu...</span>}
+                  {autoSaveStatus === 'saved' && <span className="text-[10px] font-black text-green-500 flex items-center gap-1"><LucideCheckCircle className="w-3 h-3" /> Đã lưu</span>}
+                </div>
               </div>
               <button
                 onClick={async () => {
@@ -531,7 +656,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                                       await dataService.updateSlide(slide.id, { imageUrl: url, pdfSource: null as any });
                                     }
                                   } catch (err) {
-                                    alert("Lỗi khi thay ảnh. Vui lòng thử lại.");
+                                    toast.error("Lỗi khi thay ảnh. Vui lòng thử lại.");
                                   } finally {
                                     setReplacingSlideId(null);
                                   }
@@ -552,29 +677,42 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
 
                     <div className="flex-1 space-y-4">
                       <div className="flex justify-between items-center">
-                        <span className="bg-slate-900 text-white px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Thiết lập câu hỏi</span>
-                        <div className="flex gap-2">
-                          {slide.questions.length > 0 && (
-                            <button
-                              onClick={() => removeQuestion(idx)}
-                              title="Xóa câu hỏi"
-                              className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                            >
-                              <LucideMessageSquare className="w-5 h-5" />
-                            </button>
-                          )}
+                        <span className="bg-slate-900 text-white px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Câu hỏi ({slide.questions.length})</span>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => moveSlide(idx, 'up')} disabled={idx === 0} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg disabled:opacity-20 transition-all" title="Di chuyển lên">
+                            <LucideChevronUp className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => moveSlide(idx, 'down')} disabled={idx === editingSession.slides.length - 1} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg disabled:opacity-20 transition-all" title="Di chuyển xuống">
+                            <LucideChevronDown className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => duplicateSlide(slide, idx)} className="p-1.5 text-indigo-400 hover:bg-indigo-50 rounded-lg transition-all" title="Nhân bản slide">
+                            <LucideCopy className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => handleDeleteSlide(slide.id, idx)}
                             title="Xóa Slide này"
-                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all"
                           >
-                            <LucideTrash2 className="w-5 h-5" />
+                            <LucideTrash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
 
-                      {slide.questions.length > 0 ? (
-                        <div className="space-y-4">
+                      {/* Question List */}
+                      {slide.questions.map((q, qIdx) => (
+                        <div key={q.id} className="bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3">
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Câu {qIdx + 1}</span>
+                            <button
+                              onClick={() => removeQuestion(idx, qIdx)}
+                              title="Xóa câu hỏi này"
+                              className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-all"
+                            >
+                              <LucideTrash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {/* Question Type Selector */}
                           <div className="flex flex-wrap gap-2">
                             {[
                               { id: QuestionType.MULTIPLE_CHOICE, label: 'Trắc nghiệm' },
@@ -588,130 +726,150 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                                   let newOptions = ['Lựa chọn 1', 'Lựa chọn 2', 'Lựa chọn 3', 'Lựa chọn 4'];
                                   if (type.id === QuestionType.TRUE_FALSE) newOptions = ['Đúng', 'Sai'];
                                   if (type.id === QuestionType.TRUE_FALSE_4) newOptions = ['', '', '', ''];
-
-                                  updateQuestion(idx, {
+                                  updateQuestion(idx, qIdx, {
                                     type: type.id as QuestionType,
                                     options: newOptions,
                                     correctAnswer: type.id === QuestionType.TRUE_FALSE_4 ? {} : null
                                   });
                                 }}
-                                className={`py-2 px-4 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all border-2 ${slide.questions[0].type === type.id ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-slate-50 border-slate-100 text-slate-400'}`}
+                                className={`py-1.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all border-2 ${q.type === type.id ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-100 text-slate-400'}`}
                               >
                                 {type.label}
                               </button>
                             ))}
                           </div>
 
-                          <div className="flex gap-4">
+                          {/* Prompt + Duration */}
+                          <div className="flex gap-3">
                             <div className="flex-1">
-                              <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Nội dung câu hỏi</label>
                               <input
                                 type="text"
-                                value={slide.questions[0].prompt}
-                                onChange={(e) => updateQuestion(idx, { prompt: e.target.value })}
-                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none"
+                                value={q.prompt}
+                                onChange={(e) => updateQuestion(idx, qIdx, { prompt: e.target.value })}
+                                className="w-full bg-white border-2 border-slate-100 rounded-xl px-4 py-2.5 font-bold text-slate-700 outline-none text-sm"
                                 placeholder="Câu hỏi là gì?"
                               />
                             </div>
-                            <div className="w-32">
-                              <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block flex items-center gap-1"><LucideClock className="w-3 h-3" /> Giây</label>
+                            <div className="w-24">
                               <input
                                 type="number"
-                                value={slide.questions[0].duration}
-                                onChange={(e) => updateQuestion(idx, { duration: parseInt(e.target.value) || 0 })}
-                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 font-black text-indigo-600 text-center outline-none"
+                                value={q.duration}
+                                onChange={(e) => updateQuestion(idx, qIdx, { duration: parseInt(e.target.value) || 0 })}
+                                className="w-full bg-white border-2 border-slate-100 rounded-xl px-3 py-2.5 font-black text-indigo-600 text-center outline-none text-sm"
+                                placeholder="Giây"
                               />
                             </div>
                           </div>
 
-                          {(slide.questions[0].type === QuestionType.MULTIPLE_CHOICE || slide.questions[0].type === QuestionType.TRUE_FALSE) && (
-                            <div className={`grid gap-3 ${slide.questions[0].type === QuestionType.TRUE_FALSE ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2'}`}>
-                              {(slide.questions[0].options || []).map((opt, optIdx) => (
+                          {/* MCQ / TF Options */}
+                          {(q.type === QuestionType.MULTIPLE_CHOICE || q.type === QuestionType.TRUE_FALSE) && (
+                            <div className={`grid gap-2 ${q.type === QuestionType.TRUE_FALSE ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2'}`}>
+                              {(q.options || []).map((opt, optIdx) => (
                                 <div key={optIdx} className="relative flex items-center gap-2">
                                   <button
-                                    onClick={() => updateQuestion(idx, { correctAnswer: opt })}
-                                    className={`p-2 rounded-lg border-2 transition-all ${slide.questions[0].correctAnswer === opt ? 'bg-green-500 border-green-500 text-white' : 'bg-slate-50 border-slate-200 text-slate-300'}`}
+                                    onClick={() => updateQuestion(idx, qIdx, { correctAnswer: opt })}
+                                    className={`p-1.5 rounded-lg border-2 transition-all ${q.correctAnswer === opt ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-200 text-slate-300'}`}
                                   >
-                                    <LucideCheck className="w-4 h-4" />
+                                    <LucideCheck className="w-3.5 h-3.5" />
                                   </button>
                                   <input
                                     type="text"
                                     value={opt}
-                                    readOnly={slide.questions[0].type === QuestionType.TRUE_FALSE}
+                                    readOnly={q.type === QuestionType.TRUE_FALSE}
                                     onChange={(e) => {
-                                      const newOpts = [...(slide.questions[0].options || [])];
+                                      const newOpts = [...(q.options || [])];
                                       newOpts[optIdx] = e.target.value;
-                                      updateQuestion(idx, { options: newOpts });
+                                      updateQuestion(idx, qIdx, { options: newOpts });
                                     }}
-                                    className={`flex-1 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none ${slide.questions[0].type === QuestionType.TRUE_FALSE ? 'bg-slate-50 cursor-default' : ''}`}
+                                    className={`flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none ${q.type === QuestionType.TRUE_FALSE ? 'bg-slate-50 cursor-default' : ''}`}
                                   />
                                 </div>
                               ))}
                             </div>
                           )}
 
-                          {slide.questions[0].type === QuestionType.SHORT_ANSWER && (
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Đáp án chính xác (Để hệ thống rà soát tự động)</label>
+                          {/* Short Answer */}
+                          {q.type === QuestionType.SHORT_ANSWER && (
+                            <div>
                               <input
                                 type="text"
-                                value={slide.questions[0].correctAnswer || ''}
-                                onChange={(e) => updateQuestion(idx, { correctAnswer: e.target.value })}
-                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-indigo-500"
-                                placeholder="Nhập đáp án đúng (ví dụ: 42 hoặc Hydrogen)..."
+                                value={q.correctAnswer || ''}
+                                onChange={(e) => updateQuestion(idx, qIdx, { correctAnswer: e.target.value })}
+                                className="w-full bg-white border-2 border-slate-100 rounded-xl px-4 py-2.5 font-bold text-slate-700 outline-none text-sm focus:border-indigo-500"
+                                placeholder="Đáp án đúng (ví dụ: 42 hoặc Hydrogen)..."
                               />
-                              <p className="text-[10px] text-slate-400 italic">Mẹo: Chỉ nên nhập 2-3 từ hoặc con số để đạt độ chính xác cao.</p>
                             </div>
                           )}
 
-                          {slide.questions[0].type === QuestionType.TRUE_FALSE_4 && (
-                            <div className="space-y-4">
-                              <div className="grid grid-cols-1 gap-3">
-                                {(slide.questions[0].options || []).map((opt, optIdx) => (
-                                  <div key={optIdx} className="flex flex-col sm:flex-row gap-3 items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                                    <span className="font-black text-slate-400 text-xs w-8 text-center">{optIdx + 1}</span>
-                                    <input
-                                      type="text"
-                                      value={opt}
-                                      onChange={(e) => {
-                                        const newOpts = [...(slide.questions[0].options || [])];
-                                        newOpts[optIdx] = e.target.value;
-                                        updateQuestion(idx, { options: newOpts });
-                                      }}
-                                      className="flex-1 bg-white px-3 py-2 rounded-lg font-bold text-sm outline-none border border-slate-200"
-                                      placeholder={`Nhập nội dung ý khẳng định ${optIdx + 1}...`}
-                                    />
-                                    <div className="flex gap-2 shrink-0">
-                                      {['Đúng', 'Sai'].map(val => (
-                                        <button
-                                          key={val}
-                                          onClick={() => handleTF4CorrectToggle(idx, optIdx, val)}
-                                          className={`px-3 py-1 rounded-lg text-[10px] font-black border-2 transition-all ${(slide.questions[0].correctAnswer as any)?.[optIdx] === val
-                                            ? (val === 'Đúng' ? 'bg-green-500 border-green-500 text-white' : 'bg-red-500 border-red-500 text-white')
-                                            : 'bg-white border-slate-200 text-slate-400'
-                                            }`}
-                                        >
-                                          {val.toUpperCase()}
-                                        </button>
-                                      ))}
-                                    </div>
+                          {/* TF4 Options */}
+                          {q.type === QuestionType.TRUE_FALSE_4 && (
+                            <div className="grid grid-cols-1 gap-2">
+                              {(q.options || []).map((opt, optIdx) => (
+                                <div key={optIdx} className="flex flex-col sm:flex-row gap-2 items-center bg-white p-3 rounded-xl border border-slate-100">
+                                  <span className="font-black text-slate-400 text-xs w-6 text-center">{optIdx + 1}</span>
+                                  <input
+                                    type="text"
+                                    value={opt}
+                                    onChange={(e) => {
+                                      const newOpts = [...(q.options || [])];
+                                      newOpts[optIdx] = e.target.value;
+                                      updateQuestion(idx, qIdx, { options: newOpts });
+                                    }}
+                                    className="flex-1 bg-slate-50 px-3 py-1.5 rounded-lg font-bold text-sm outline-none border border-slate-100"
+                                    placeholder={`Ý khẳng định ${optIdx + 1}...`}
+                                  />
+                                  <div className="flex gap-1.5 shrink-0">
+                                    {['Đúng', 'Sai'].map(val => (
+                                      <button
+                                        key={val}
+                                        onClick={() => handleTF4CorrectToggle(idx, qIdx, optIdx, val)}
+                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black border-2 transition-all ${(q.correctAnswer as any)?.[optIdx] === val
+                                          ? (val === 'Đúng' ? 'bg-green-500 border-green-500 text-white' : 'bg-red-500 border-red-500 text-white')
+                                          : 'bg-white border-slate-200 text-slate-400'
+                                          }`}
+                                      >
+                                        {val.toUpperCase()}
+                                      </button>
+                                    ))}
                                   </div>
-                                ))}
-                              </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
-                      ) : (
-                        <button
-                          onClick={() => addQuestionToSlide(idx)}
-                          className="w-full border-2 border-dashed border-slate-200 rounded-2xl py-8 text-slate-400 hover:text-indigo-600 hover:border-indigo-200 transition-all font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2"
-                        >
-                          <LucidePlus className="w-5 h-5" /> Gắn câu hỏi cho Slide này
-                        </button>
-                      )}
+                      ))}
+
+                      {/* Add Question Button */}
+                      <button
+                        onClick={() => addQuestionToSlide(idx)}
+                        className="w-full border-2 border-dashed border-slate-200 rounded-2xl py-4 text-slate-400 hover:text-indigo-600 hover:border-indigo-200 transition-all font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2"
+                      >
+                        <LucidePlus className="w-4 h-4" /> Thêm câu hỏi
+                      </button>
                     </div>
                   </div>
                 ))}
+
+                {/* Add Blank Slide Button */}
+                <button
+                  onClick={async () => {
+                    const newSlide = await dataService.createSlide(editingSession.id, {
+                      title: `Slide ${editingSession.slides.length + 1}`,
+                      content: '',
+                      questions: [],
+                      order_index: editingSession.slides.length
+                    });
+                    if (newSlide) {
+                      setEditingSession({
+                        ...editingSession,
+                        slides: [...editingSession.slides, newSlide]
+                      });
+                    }
+                  }}
+                  className="w-full border-2 border-dashed border-indigo-200 rounded-[2rem] py-8 text-indigo-400 hover:text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50/50 transition-all font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3"
+                >
+                  <LucidePlus className="w-6 h-6" /> Thêm Slide mới
+                </button>
               </div>
             </div>
 
@@ -745,10 +903,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                     await Promise.all(slideUpdates);
 
                     setEditingSession(null);
-                    alert("Đã lưu cấu hình thành công!");
+                    toast.success("Đã lưu cấu hình thành công!");
                   } catch (err) {
                     console.error("Save error:", err);
-                    alert("Có lỗi xảy ra khi lưu. Vui lòng thử lại.");
+                    toast.error("Có lỗi xảy ra khi lưu. Vui lòng thử lại.");
                   } finally {
                     setIsSaving(false);
                   }

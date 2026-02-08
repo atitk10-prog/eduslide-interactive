@@ -9,6 +9,7 @@ import AdminDashboard from './components/AdminDashboard';
 import { LucideLayout, LucideLogOut, LucideSettings, LucideMonitor } from 'lucide-react';
 import { dataService } from './services/dataService';
 import { supabase } from './services/supabase';
+import ToastContainer, { toast } from './components/Toast';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -123,7 +124,7 @@ const App: React.FC = () => {
     if (success) {
       setSessions(prev => prev.filter(s => s.id !== sessionId));
     } else {
-      alert("Xóa bài giảng thất bại. Có thể do lỗi kết nối hoặc phân quyền.");
+      toast.error("Xóa bài giảng thất bại. Có thể do lỗi kết nối hoặc phân quyền.");
     }
   };
 
@@ -132,7 +133,7 @@ const App: React.FC = () => {
       // 1. Clone session to create a fresh learning instance with new room code
       const freshSession = await dataService.cloneSession(session.id);
       if (!freshSession) {
-        alert("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
+        toast.error("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
         return;
       }
 
@@ -147,7 +148,7 @@ const App: React.FC = () => {
       }));
     } catch (error) {
       console.error("Error starting presentation:", error);
-      alert("Đã xảy ra lỗi khi khởi động trình chiếu.");
+      toast.error("Đã xảy ra lỗi khi khởi động trình chiếu.");
     }
   };
 
@@ -261,6 +262,7 @@ const App: React.FC = () => {
           </p>
         </footer>
       )}
+      <ToastContainer />
     </div>
   );
 };

@@ -1,8 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types';
-import { LucideUserCircle, LucideGraduationCap, LucideShieldCheck, LucideMail, LucideLock, LucideArrowRight, LucideLoader2 } from 'lucide-react';
+import { LucideUserCircle, LucideGraduationCap, LucideShieldCheck, LucideMail, LucideLock, LucideArrowRight, LucideLoader2, LucideEye, LucideEyeOff } from 'lucide-react';
 import { supabase } from '../services/supabase';
+import { toast } from './Toast';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -15,12 +16,24 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedRole, setSelectedRole] = useState<'TEACHER' | 'STUDENT' | 'ADMIN' | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [validationError, setValidationError] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectedRole === 'TEACHER' || selectedRole === 'ADMIN') {
+      setTimeout(() => emailInputRef.current?.focus(), 100);
+    }
+  }, [selectedRole, isSignUp]);
 
   const handleStudentLogin = () => {
     if (!name.trim()) {
-      alert('Vui lòng nhập tên của bạn');
+      setValidationError('Vui lòng nhập tên của bạn');
+      nameInputRef.current?.focus();
       return;
     }
+    setValidationError('');
     onLogin({
       id: `std-${Math.random().toString(36).substr(2, 9)}`,
       name: name,
@@ -45,7 +58,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           }
         });
         if (error) throw error;
-        alert('Đăng ký thành công! Hãy đăng nhập.');
+        toast.success('Đăng ký thành công! Hãy đăng nhập.');
         setIsSignUp(false);
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -55,7 +68,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         if (error) throw error;
       }
     } catch (error: any) {
-      alert(error.message);
+      toast.error(error.message);
     } finally {
       setLoading(false);
     }
@@ -72,7 +85,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       });
       if (error) throw error;
     } catch (error: any) {
-      alert(error.message);
+      toast.error(error.message);
     } finally {
       setLoading(false);
     }
@@ -102,14 +115,17 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest pl-1">Tài khoản</label>
               <div className="relative">
                 <LucideMail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full pl-12 pr-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-600 outline-none font-bold" placeholder={isAdmin ? 'admin' : 'tên_đăng_nhập'} required />
+                <input type="text" ref={emailInputRef} value={email} onChange={(e) => setEmail(e.target.value)} className="w-full pl-12 pr-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-600 outline-none font-bold" placeholder={isAdmin ? 'admin' : 'tên_đăng_nhập'} required />
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest pl-1">Mật khẩu</label>
               <div className="relative">
                 <LucideLock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-12 pr-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-600 outline-none font-bold" placeholder="••••••••" required />
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-12 pr-12 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-600 outline-none font-bold" placeholder="••••••••" required />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
+                  {showPassword ? <LucideEyeOff className="w-5 h-5" /> : <LucideEye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
@@ -179,11 +195,15 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
             <input
               type="text"
+              ref={nameInputRef}
               placeholder="Họ tên của bạn..."
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-white border-2 border-slate-100 focus:border-indigo-600 outline-none font-bold text-sm"
+              onChange={(e) => { setName(e.target.value); setValidationError(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && handleStudentLogin()}
+              className={`w-full px-4 py-3 rounded-xl bg-white border-2 ${validationError ? 'border-red-400' : 'border-slate-100'} focus:border-indigo-600 outline-none font-bold text-sm transition-colors`}
+              autoFocus
             />
+            {validationError && <p className="text-red-500 text-xs font-bold mt-1">{validationError}</p>}
             <button onClick={handleStudentLogin} className="w-full bg-slate-900 text-white py-3 rounded-xl font-black text-[10px] tracking-widest hover:bg-indigo-600 transition-all active:scale-95 mt-auto">VÀO LỚP</button>
           </div>
 

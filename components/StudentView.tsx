@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock, LucideSmartphone, LucideRotateCw } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock, LucideSmartphone, LucideRotateCw, LucideBarChart3 } from 'lucide-react';
 import { dataService } from '../services/dataService';
+import { toast } from './Toast';
 import { supabase } from '../services/supabase';
 import PDFSlideRenderer from './PDFSlideRenderer';
 
@@ -54,12 +55,19 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [offlineCount, setOfflineCount] = useState(0);
   const [isFocusMode, setIsFocusMode] = useState(false);
+  const isFocusModeRef = useRef(false); // Ref to avoid stale closure in event handlers
   const [isCurrentlyFullscreen, setIsCurrentlyFullscreen] = useState(false);
   const [screenShareImage, setScreenShareImage] = useState<string | null>(null);
   const [showRotatePrompt, setShowRotatePrompt] = useState(false);
   const [dismissedRotate, setDismissedRotate] = useState(false);
   const [focusWarningCountdown, setFocusWarningCountdown] = useState<number | null>(null);
   const focusTimerRef = useRef<number | null>(null);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  // Keep ref in sync with state so event handlers always read the latest value
+  useEffect(() => {
+    isFocusModeRef.current = isFocusMode;
+  }, [isFocusMode]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -82,6 +90,28 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     setCurrentXP(xp);
   };
 
+  // Helper: request fullscreen then lock landscape orientation
+  const requestFullscreenAndLockLandscape = async () => {
+    try {
+      const el = document.documentElement;
+      const reqFS = el.requestFullscreen
+        || (el as any).webkitRequestFullscreen
+        || (el as any).mozRequestFullScreen
+        || (el as any).msRequestFullscreen;
+      if (reqFS) {
+        await reqFS.call(el);
+      }
+      // After entering fullscreen, lock orientation
+      if ((screen.orientation as any)?.lock) {
+        await (screen.orientation as any).lock('landscape');
+      }
+      setShowRotatePrompt(false);
+    } catch (e) {
+      console.warn('Could not auto-lock landscape:', e);
+      // Fallback: keep showing the manual rotate prompt
+    }
+  };
+
   // Auto-detect portrait mode on mobile and suggest landscape
   useEffect(() => {
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -100,14 +130,28 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     window.addEventListener('resize', checkOrientation);
     window.addEventListener('orientationchange', checkOrientation);
 
-    // Try to lock landscape when presentation starts
-    if (isPresentationStarted && (screen.orientation as any)?.lock) {
-      (screen.orientation as any).lock('landscape').catch(() => { });
+    // When entering fullscreen (from any trigger), auto-lock landscape
+    const handleFullscreenForOrientation = async () => {
+      if (document.fullscreenElement && isPresentationStarted) {
+        try {
+          if ((screen.orientation as any)?.lock) {
+            await (screen.orientation as any).lock('landscape');
+            setShowRotatePrompt(false);
+          }
+        } catch { }
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenForOrientation);
+
+    // Auto-attempt fullscreen + landscape lock when presentation starts in portrait
+    if (isPresentationStarted && window.innerHeight > window.innerWidth) {
+      requestFullscreenAndLockLandscape();
     }
 
     return () => {
       window.removeEventListener('resize', checkOrientation);
       window.removeEventListener('orientationchange', checkOrientation);
+      document.removeEventListener('fullscreenchange', handleFullscreenForOrientation);
     };
   }, [isPresentationStarted, dismissedRotate]);
 
@@ -397,14 +441,25 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        // Only alert teacher when focus mode is ON
-        if (isFocusMode) {
+        // Only alert teacher when focus mode is ON (use ref to avoid stale closure)
+        if (isFocusModeRef.current) {
           socket.emit('student:alert', { name: user.name, reason: 'TAB_SWITCH' });
           socket.emit('student:tab-away', { name: user.name, timestamp: Date.now() });
+          // Start a warning countdown for the student
+          let countdown = 10;
+          setFocusWarningCountdown(countdown);
+          if (focusTimerRef.current) clearInterval(focusTimerRef.current);
+          focusTimerRef.current = window.setInterval(() => {
+            countdown--;
+            setFocusWarningCountdown(countdown);
+            if (countdown <= 0) {
+              if (focusTimerRef.current) clearInterval(focusTimerRef.current);
+            }
+          }, 1000);
         }
       } else {
         // Student came back
-        if (isFocusMode) {
+        if (isFocusModeRef.current) {
           socket.emit('student:tab-back', { name: user.name, timestamp: Date.now() });
           // Clear the countdown warning
           if (focusTimerRef.current) {
@@ -425,7 +480,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       }
 
       // 2. Focus Mode Hard Lock
-      if (isFocusMode) {
+      if (isFocusModeRef.current) {
         const barredKeys = ['Tab', 'Meta', 'Alt', 'Control', 'Escape', 'F11', 'F12'];
         if (barredKeys.includes(e.key) || (e.altKey && e.key === 'Tab') || (e.metaKey)) {
           e.preventDefault();
@@ -613,6 +668,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     if (submittedAnswers[questionId] || isTimeout || !sessionData?.id || sessionData.id === 'sess-1') return;
     setSubmittedAnswers(prev => ({ ...prev, [questionId]: answer }));
 
+    // Show submit confirmation animation
+    setShowSubmitConfirm(true);
+    setTimeout(() => setShowSubmitConfirm(false), 1500);
+
     const response = {
       sessionId: sessionData.id,
       studentName: user.name,
@@ -626,7 +685,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     const success = await dataService.submitResponse(response);
     if (!success) {
       console.error("FAILED TO SAVE TO DB:", response);
-      alert("Lỗi: Không thể lưu câu trả lời vào máy chủ. Vui lòng thử lại.");
+      toast.error("Lỗi: Không thể lưu câu trả lời vào máy chủ. Vui lòng thử lại.");
       setSubmittedAnswers(prev => {
         const next = { ...prev };
         delete next[questionId];
@@ -642,7 +701,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     const session = await dataService.getSessionByRoomCode(roomCode);
 
     if (!session) {
-      alert('Không tìm thấy phòng học hoặc phòng đã đóng.');
+      toast.error('Không tìm thấy phòng học hoặc phòng đã đóng.');
       return;
     }
 
@@ -692,7 +751,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.emit('qa:submit', { roomCode, question });
       setNewQuestion('');
     } else {
-      alert("Lỗi: Không thể gửi câu hỏi lúc này.");
+      toast.error("Lỗi: Không thể gửi câu hỏi lúc này.");
     }
   };
 
@@ -834,9 +893,36 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
         ) : question ? (
           <div className="w-full max-w-lg space-y-6">
             <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
-              <div className="absolute top-0 left-0 h-1 bg-indigo-600 transition-all duration-1000" style={{ width: `${(timeLeft / (question.duration || 1)) * 100}%` }} />
+              {/* Enhanced Countdown Progress Bar */}
+              {isQuestionActive && (
+                <div className="absolute top-0 left-0 w-full h-1.5">
+                  <div
+                    className={`h-full transition-all duration-1000 ease-linear ${timeLeft > (question.duration || 30) * 0.6 ? 'bg-green-500' :
+                      timeLeft > (question.duration || 30) * 0.3 ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}
+                    style={{ width: `${(timeLeft / (question.duration || 1)) * 100}%` }}
+                  />
+                </div>
+              )}
+              {!isQuestionActive && <div className="absolute top-0 left-0 w-full h-1 bg-slate-200" />}
               <h3 className="text-xl font-bold text-slate-900 leading-tight">{question.prompt}</h3>
+              {isQuestionActive && timeLeft <= 5 && timeLeft > 0 && (
+                <div className="mt-3 text-center">
+                  <span className="text-red-500 font-black text-2xl animate-pulse">{timeLeft}</span>
+                  <span className="text-red-400 text-xs font-bold ml-2 uppercase">giây còn lại!</span>
+                </div>
+              )}
             </div>
+
+            {/* Submit Confirmation Animation */}
+            {showSubmitConfirm && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
+                <div className="bg-green-500 text-white p-8 rounded-[2rem] shadow-2xl animate-in zoom-in fade-in duration-300 flex flex-col items-center gap-3">
+                  <LucideCheckCircle2 className="w-16 h-16 animate-bounce" />
+                  <span className="text-xl font-black uppercase">GẬi thành công!</span>
+                </div>
+              </div>
+            )}
 
             {/* Waiting for Reveal State */}
             {isWaitingForReveal && !revealData && (
@@ -1165,10 +1251,79 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           </div>
         )}
 
+        {/* Quick Poll Overlay */}
+        {quickPoll && !isQuestionActive && (
+          <div className="absolute inset-0 z-[55] bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-300">
+            <div className="absolute top-0 left-0 w-full h-full bg-black/20" />
+            <div className="relative z-10 w-full max-w-sm flex flex-col items-center gap-8">
+              <div className="text-center">
+                <div className="bg-white/20 backdrop-blur-sm px-4 py-1.5 rounded-full text-[10px] font-black text-white uppercase tracking-widest mb-4 inline-flex items-center gap-2">
+                  <LucideBarChart3 className="w-3 h-3" /> BÌNH CHỌN NHANH
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-black text-white drop-shadow-lg">{quickPoll.prompt}</h2>
+              </div>
+              <div className="w-full grid grid-cols-2 gap-3">
+                {quickPoll.options.map((opt: string, idx: number) => {
+                  const isSelected = pollSelectedOption === opt;
+                  const colors = ['bg-blue-500', 'bg-green-500', 'bg-amber-500', 'bg-red-500', 'bg-purple-500'];
+                  return (
+                    <button
+                      key={idx}
+                      onClick={async () => {
+                        if (pollSelectedOption) return; // Already voted
+                        setPollSelectedOption(opt);
+                        socket.emit('poll:response', { studentName: user.name, option: opt });
+                        if (quickPoll.id) {
+                          await dataService.submitPollResponse(quickPoll.id, user.name, opt);
+                        }
+                      }}
+                      disabled={!!pollSelectedOption}
+                      className={`p-6 rounded-2xl font-black text-white text-lg transition-all border-2 ${isSelected
+                        ? 'border-white scale-105 shadow-2xl ring-4 ring-white/30'
+                        : pollSelectedOption
+                          ? 'border-white/10 opacity-40'
+                          : `border-white/20 hover:border-white hover:scale-105 active:scale-95`
+                        } ${colors[idx % colors.length]}`}
+                    >
+                      {opt}
+                      {isSelected && <LucideCheck className="w-5 h-5 mx-auto mt-2" />}
+                    </button>
+                  );
+                })}
+              </div>
+              {pollSelectedOption && (
+                <div className="bg-white/20 backdrop-blur-sm px-6 py-3 rounded-2xl">
+                  <p className="text-white font-black text-sm">Đã chọn: {pollSelectedOption} ✓</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Focus Mode Warning Overlay */}
+        {isFocusMode && focusWarningCountdown !== null && (
+          <div className="absolute inset-0 z-[90] bg-red-600/95 backdrop-blur-md flex flex-col items-center justify-center p-8 animate-in fade-in duration-300">
+            <LucideAlertTriangle className="w-20 h-20 text-white mb-6 animate-bounce" />
+            <h2 className="text-3xl font-black text-white mb-3">CẢNH BÁO!</h2>
+            <p className="text-white/90 font-bold text-lg text-center mb-6">Bạn đang rời khỏi bài giảng.<br />Giáo viên đã được thông báo!</p>
+            <div className="bg-white/20 px-8 py-4 rounded-2xl">
+              <span className="text-white font-black text-4xl">{focusWarningCountdown > 0 ? focusWarningCountdown : 0}s</span>
+            </div>
+            <p className="text-white/60 text-sm font-bold mt-4">Quay lại tab ngay để tránh vi phạm</p>
+          </div>
+        )}
+
+        {/* Focus Mode Active Indicator */}
+        {isFocusMode && focusWarningCountdown === null && (
+          <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-[45] bg-orange-500 text-white px-3 py-1.5 rounded-full text-[10px] font-black flex items-center gap-1.5 animate-pulse">
+            <LucideLock className="w-3 h-3" /> TẬP TRUNG
+          </div>
+        )}
+
         {/* Screen Share Overlay */}
         {screenShareImage && !isQuestionActive && (
-          <div className="absolute inset-0 z-[50] bg-slate-950 flex items-center justify-center p-2 sm:p-4">
-            <img src={screenShareImage} className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" alt="Teacher Screen" />
+          <div className="absolute inset-0 z-[50] bg-black flex items-center justify-center">
+            <img src={screenShareImage} className="w-full h-full object-contain" alt="Teacher Screen" />
             <div className="absolute top-2 left-2 sm:top-4 sm:left-4 bg-red-600 text-white px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[10px] sm:text-xs font-black animate-pulse flex items-center gap-1 sm:gap-2">
               <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-white rounded-full" /> TRỰC TIẾP
             </div>
@@ -1188,7 +1343,20 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
               <LucideSmartphone className="w-16 h-16 text-indigo-400 rotate-90" />
             </div>
             <h3 className="text-white text-lg font-black text-center mb-2">XIN HÃY XOAY NGANG</h3>
-            <p className="text-slate-400 text-sm text-center">Xoay điện thoại ngang để xem bài giảng tốt hơn</p>
+            <p className="text-slate-400 text-sm text-center mb-6">Xoay điện thoại ngang để xem bài giảng tốt hơn</p>
+            <button
+              onClick={requestFullscreenAndLockLandscape}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 px-8 rounded-2xl shadow-lg active:scale-95 transition-all flex items-center gap-3 touch-manipulation text-base mb-3"
+            >
+              <LucideRotateCw className="w-5 h-5" />
+              Tự động xoay ngang
+            </button>
+            <button
+              onClick={() => { setDismissedRotate(true); setShowRotatePrompt(false); }}
+              className="text-slate-500 hover:text-white text-sm font-medium transition-all"
+            >
+              Bỏ qua
+            </button>
           </div>
         )}
 

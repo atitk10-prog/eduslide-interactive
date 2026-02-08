@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Session } from '../types';
 import { dataService } from '../services/dataService';
 import { LucideTrash2, LucideShieldCheck, LucideSearch, LucideUser, LucideFileText, LucideClock, LucideLoader2, LucideLock, LucideMonitor, LucideDatabase } from 'lucide-react';
+import { toast } from './Toast';
 
 interface AdminDashboardProps {
     sessions: Session[];
@@ -55,7 +56,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onDeleteSessi
     const handleResetPassword = async (teacherEmail: string) => {
         if (!confirm('Bạn có chắc chắn muốn reset mật khẩu tài khoản này về mặc định (123456)?')) return;
         const res = await dataService.resetTeacherPassword(teacherEmail);
-        alert(res.message);
+        toast.info(res.message);
     };
 
     const handleCreateTeacher = async (e: React.FormEvent) => {
@@ -68,11 +69,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onDeleteSessi
         const res = await dataService.createTeacherAccount(fullEmail, tPassword, tName);
         setIsCreating(false);
         if (res.success) {
-            alert(res.message);
+            toast.success(res.message);
             setTName(''); setTEmail(''); setTPassword('');
             loadTeachers();
         } else {
-            alert('Lỗi: ' + res.message);
+            toast.error('Lỗi: ' + res.message);
         }
     };
 

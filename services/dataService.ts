@@ -222,6 +222,40 @@ export const dataService = {
         return !error;
     },
 
+    async createSlide(sessionId: string, slideData: Partial<Slide> & { order_index?: number }): Promise<Slide | null> {
+        if (isMock) {
+            return { id: `slide-${Date.now()}`, title: slideData.title || '', content: slideData.content || '', questions: [], ...slideData } as Slide;
+        }
+
+        const { data, error } = await supabase
+            .from('edu_slides')
+            .insert({
+                session_id: sessionId,
+                title: slideData.title || 'Slide mới',
+                content: slideData.content || '',
+                image_url: slideData.imageUrl || null,
+                pdf_source: slideData.pdfSource || null,
+                pdf_page: slideData.pdfPage || null,
+                questions: slideData.questions || [],
+                order_index: slideData.order_index ?? 0
+            })
+            .select()
+            .single();
+
+        if (error || !data) return null;
+
+        return {
+            id: data.id,
+            title: data.title,
+            content: data.content,
+            imageUrl: data.image_url,
+            pdfSource: data.pdf_source,
+            pdfPage: data.pdf_page,
+            questions: data.questions || [],
+            order_index: data.order_index
+        } as Slide;
+    },
+
     async deleteSlide(slideId: string): Promise<boolean> {
         if (isMock) return true;
         const { error } = await supabase
@@ -239,17 +273,29 @@ export const dataService = {
             return true;
         }
 
-        const { error } = await supabase
-            .from('edu_sessions')
-            .delete()
-            .eq('id', sessionId);
+        try {
+            // Cascade delete: remove all child records before deleting the session
+            // Order matters due to foreign key constraints
+            await supabase.from('edu_responses').delete().eq('session_id', sessionId);
+            await supabase.from('edu_qa_questions').delete().eq('session_id', sessionId);
+            await supabase.from('edu_polls').delete().eq('session_id', sessionId);
+            await supabase.from('edu_slides').delete().eq('session_id', sessionId);
 
-        if (error) {
-            console.error('Error deleting session:', error);
+            const { error } = await supabase
+                .from('edu_sessions')
+                .delete()
+                .eq('id', sessionId);
+
+            if (error) {
+                console.error('Error deleting session:', error);
+                return false;
+            }
+
+            return true;
+        } catch (err) {
+            console.error('Error cascade-deleting session:', err);
             return false;
         }
-
-        return true;
     },
 
     async cloneSession(sessionId: string): Promise<Session | null> {
@@ -402,7 +448,7 @@ export const dataService = {
             .select('*, slides:edu_slides(*)')
             .eq('room_code', code)
             .eq('is_active', true)
-            .single();
+            .maybeSingle();
 
         if (error || !data) return null;
 
