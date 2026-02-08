@@ -73,7 +73,9 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [brushColor, setBrushColor] = useState('#6366f1');
 
   const timerRef = useRef<number | null>(null);
+  const screenShareTimerRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const screenCaptureCanvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const currentSlide = session.slides[currentSlideIndex];
@@ -283,27 +285,31 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       });
       setScreenStream(stream);
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play(); // Ensure video plays
-      }
+      // videoRef will be attached to the visible preview <video> element
+      // We need a short delay for React to render the preview element
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => { });
+        }
+      }, 100);
 
-      // Start broadcasting frames
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = window.setInterval(() => {
-        if (!videoRef.current || !canvasRef.current) return;
+      // Start broadcasting frames using dedicated screen capture refs
+      if (screenShareTimerRef.current) clearInterval(screenShareTimerRef.current);
+      screenShareTimerRef.current = window.setInterval(() => {
+        if (!videoRef.current || !screenCaptureCanvasRef.current) return;
 
         const vid = videoRef.current;
-        const canvas = canvasRef.current;
+        const canvas = screenCaptureCanvasRef.current;
         const ctx = canvas.getContext('2d');
 
         if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
-          canvas.width = 640; // Low res for performance
-          canvas.height = 360; // 16:9 aspect
+          canvas.width = 480; // Lower res for performance
+          canvas.height = 270; // 16:9 aspect
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
-          // Low quality JPEG
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+          // Lower quality JPEG for reduced bandwidth
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.25);
           socket.emit('screen:frame', { image: dataUrl });
         }
       }, 500); // 2 FPS
@@ -321,9 +327,9 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       screenStream.getTracks().forEach(track => track.stop());
       setScreenStream(null);
     }
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+    if (screenShareTimerRef.current) {
+      clearInterval(screenShareTimerRef.current);
+      screenShareTimerRef.current = null;
     }
     socket.emit('screen:stop', {});
   };
@@ -359,12 +365,13 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   useEffect(() => {
     socket.joinRoom(session.roomCode);
 
+    // Emit session info once on mount (not on every slide change)
     socket.emit('session:start', {
       roomCode: session.roomCode,
-      currentSlideIndex: currentSlideIndex,
+      currentSlideIndex: 0,
       title: session.title,
       slides: session.slides,
-      isStarted: isPresentationStarted
+      isStarted: false
     });
 
     const handleAnswer = (data: AnswerResponse) => {
@@ -412,8 +419,6 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setQuickPoll((prev: any) => {
         if (!prev) return null;
         const updated = { ...prev, responses: { ...prev.responses, [studentName]: option } };
-        // We don't need to broadcast back the whole poll state every time if students just send responses
-        // But the teacher needs to see it.
         return updated;
       });
     };
@@ -481,11 +486,14 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       socket.off('qa:submit', handleQASubmit);
       socket.off('qa:upvote', handleQAUpvote);
       socket.off('poll:response', handlePollResponse);
+      socket.off('student:alert', handleStudentAlert);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
       socket.leaveRoom();
       stopTimer();
       stopScreenShare();
     };
-  }, [session, currentSlideIndex, isPresentationStarted]);
+  }, [session.id, session.roomCode]);
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     setIsDrawing(true);
@@ -601,7 +609,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         </div>
         <div className="flex items-center gap-2 text-slate-400 font-bold text-xs uppercase tracking-widest bg-white/5 px-4 py-2 rounded-xl">
           <LucideUsers className="w-4 h-4 text-indigo-400" />
-          <span>{activeStudents.size} Học sinh</span>
+          <span>{joinedStudents.length} Học sinh</span>
         </div>
 
         <div className="flex gap-2">
@@ -1509,9 +1517,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         </div>
 
 
-        {/* Hidden video/canvas for screen sharing capture */}
-        <video ref={videoRef} className="hidden" muted playsInline />
-        <canvas ref={canvasRef} className="hidden" />
+        {/* Hidden canvas for screen sharing frame capture (separate from drawing canvas) */}
+        <canvas ref={screenCaptureCanvasRef} className="hidden" />
 
         {/* Detailed Report Modal */}
         {showReportModal && (

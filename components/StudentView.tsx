@@ -447,6 +447,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.off('qa:update', handleQAUpdate);
       socket.off('poll:start', handlePollStart);
       socket.off('poll:stop', handlePollStop);
+      socket.off('focus:mode', handleFocusMode);
       socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
