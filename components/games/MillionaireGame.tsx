@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { LucideX, LucidePlay, LucideLoader2, LucideCheck, LucideSkipForward, LucideTrophy, LucideRefreshCw, LucideSparkles, LucideAlertTriangle, LucideUsers, LucideFileText } from 'lucide-react';
-import { dataService } from '../../services/dataService';
+import { LucideX, LucidePlay, LucideLoader2, LucideCheck, LucideSkipForward, LucideTrophy, LucideRefreshCw, LucideAlertTriangle, LucideUsers, LucideFileText, LucideDownload } from 'lucide-react';
 import WordImporter from './WordImporter';
 
 // Types
@@ -37,7 +36,7 @@ const MillionaireGame: React.FC<MillionaireGameProps> = ({ onClose, socket, room
     const [questionCount, setQuestionCount] = useState(10);
     const [difficulty, setDifficulty] = useState<Difficulty>('Vừa');
     const [timerDuration, setTimerDuration] = useState(30);
-    const [apiKey, setApiKey] = useState('');
+
 
     // Game state
     const [phase, setPhase] = useState<GamePhase>('SETUP');
@@ -52,14 +51,7 @@ const MillionaireGame: React.FC<MillionaireGameProps> = ({ onClose, socket, room
 
     const timerRef = useRef<number | null>(null);
 
-    // Load API key from Supabase
-    useEffect(() => {
-        const loadKey = async () => {
-            const key = await dataService.getNextApiKey();
-            if (key) setApiKey(key);
-        };
-        loadKey();
-    }, []);
+
 
     // Listen for student answers
     useEffect(() => {
@@ -88,56 +80,47 @@ const MillionaireGame: React.FC<MillionaireGameProps> = ({ onClose, socket, room
         };
     }, [phase, timeLeft]);
 
-    const fetchQuestions = useCallback(async () => {
-        if (!topic.trim()) return;
-        const keyToUse = apiKey || await dataService.getNextApiKey();
-        if (!keyToUse) {
-            setError('Chưa có API key. Vui lòng thêm key trong phần Cài đặt.');
-            return;
-        }
+    // Download Word template
+    const downloadTemplate = () => {
+        const template = `1. Thủ đô của Việt Nam là gì?
+A. TP.HCM
+B. Hà Nội
+C. Đà Nẵng
+D. Huế
 
-        setPhase('LOADING');
-        setError('');
+2. Sông nào dài nhất Việt Nam?
+A. Sông Hồng
+B. Sông Đồng Nai
+C. Sông Mê Kông
+D. Sông Bạch Đằng
 
-        try {
-            const { GoogleGenAI, Type } = await import('@google/genai');
-            const ai = new GoogleGenAI({ apiKey: keyToUse });
+3. Năm thành lập nước CHXHCN Việt Nam?
+A. 1945
+B. 1954
+C. 1975
+D. 1976
 
-            let difficultyPrompt = "The difficulty must increase progressively from very easy to extremely hard.";
-            if (difficulty === 'Dễ') difficultyPrompt = "The difficulty must increase progressively, starting from very easy and ending with medium.";
-            if (difficulty === 'Khó') difficultyPrompt = "The difficulty must increase progressively, starting from medium and ending with expert-level.";
+HƯỚNG DẪN:
+- Mỗi câu bắt đầu bằng số thứ tự (1. 2. 3. ...)
+- Đáp án A. B. C. D.
+- Gạch chân hoặc in đậm đáp án đúng trong file Word
+- Lưu file dạng .docx`;
+        const blob = new Blob([template], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mau_cau_hoi_trivia.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
-            const contents = `Generate ${questionCount} trivia questions for a 'Who Wants to Be a Millionaire?' style game, in Vietnamese. The topic is "${topic}". ${difficultyPrompt} For each question, provide the question text, four multiple-choice options (A, B, C, D), and the index of the correct answer (0-3).`;
-
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                question: { type: Type.STRING, description: 'The question text in Vietnamese.' },
-                                options: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'An array of 4 possible answers in Vietnamese.' },
-                                correctAnswerIndex: { type: Type.INTEGER, description: 'The index (0-3) of the correct answer.' },
-                            },
-                            required: ["question", "options", "correctAnswerIndex"],
-                        },
-                    },
-                },
-            });
-
-            const parsed = JSON.parse(response.text?.trim() || '[]') as GameQuestion[];
-            if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Invalid response');
-            setQuestions(parsed);
-            setPhase('REVIEW');
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Lỗi tạo câu hỏi');
-            setPhase('SETUP');
-        }
-    }, [topic, questionCount, difficulty, apiKey]);
+    // Word import handler
+    const handleWordImport = (imported: GameQuestion[]) => {
+        setQuestions(imported);
+        setShowWordImporter(false);
+        setTopic('Câu hỏi từ Word');
+        setPhase('REVIEW');
+    };
 
     const startGame = () => {
         setCurrentIndex(0);
@@ -235,19 +218,12 @@ const MillionaireGame: React.FC<MillionaireGameProps> = ({ onClose, socket, room
                     </div>
 
                     <div className="space-y-4">
-                        <div>
-                            <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Chủ đề câu hỏi</label>
-                            <input value={topic} onChange={e => setTopic(e.target.value)}
-                                className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white placeholder-white/30 outline-none focus:border-yellow-400"
-                                placeholder="Ví dụ: Lịch sử Việt Nam, Toán lớp 9..." />
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Số câu</label>
-                                <select value={questionCount} onChange={e => setQuestionCount(Number(e.target.value))}
+                                <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Timer (giây)</label>
+                                <select value={timerDuration} onChange={e => setTimerDuration(Number(e.target.value))}
                                     className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white outline-none">
-                                    {[5, 10, 15].map(n => <option key={n} value={n}>{n}</option>)}
+                                    {[15, 20, 30, 45, 60].map(n => <option key={n} value={n}>{n}s</option>)}
                                 </select>
                             </div>
                             <div>
@@ -259,56 +235,36 @@ const MillionaireGame: React.FC<MillionaireGameProps> = ({ onClose, socket, room
                                     <option value="Khó">Khó</option>
                                 </select>
                             </div>
-                            <div>
-                                <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Timer (s)</label>
-                                <select value={timerDuration} onChange={e => setTimerDuration(Number(e.target.value))}
-                                    className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white outline-none">
-                                    {[15, 20, 30, 45, 60].map(n => <option key={n} value={n}>{n}s</option>)}
-                                </select>
-                            </div>
                         </div>
-
-                        {!apiKey && (
-                            <div>
-                                <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Gemini API Key</label>
-                                <input value={apiKey} onChange={e => setApiKey(e.target.value)}
-                                    className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white placeholder-white/30 outline-none font-mono text-sm"
-                                    placeholder="AIzaSy..." />
-                            </div>
-                        )}
 
                         {error && <p className="text-red-400 text-sm bg-red-500/10 rounded-xl p-3 flex items-center gap-2"><LucideAlertTriangle className="w-4 h-4" />{error}</p>}
 
-                        <button onClick={fetchQuestions} disabled={!topic.trim()}
-                            className="w-full bg-yellow-500 text-black font-black py-4 rounded-2xl text-lg hover:bg-yellow-400 transition-all disabled:opacity-40 flex items-center justify-center gap-2">
-                            <LucideSparkles className="w-5 h-5" /> TẠO CÂU HỎI BẰNG AI
-                        </button>
-                        <div className="flex items-center gap-3">
-                            <div className="flex-1 h-px bg-white/10" />
-                            <span className="text-indigo-400 text-xs font-bold">HOẶC</span>
-                            <div className="flex-1 h-px bg-white/10" />
-                        </div>
                         <button onClick={() => setShowWordImporter(true)}
-                            className="w-full bg-white/10 text-white font-bold py-3 rounded-2xl text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2 border border-white/10">
-                            <LucideFileText className="w-5 h-5" /> IMPORT TỪ FILE WORD (.docx)
+                            className="w-full bg-yellow-500 text-black font-black py-4 rounded-2xl text-lg hover:bg-yellow-400 transition-all flex items-center justify-center gap-2">
+                            <LucideFileText className="w-5 h-5" /> IMPORT CÂU HỎI TỪ WORD
                         </button>
+
+                        <button onClick={downloadTemplate}
+                            className="w-full bg-white/10 text-white font-bold py-3 rounded-2xl text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2 border border-white/10">
+                            <LucideDownload className="w-4 h-4" /> TẢI MẪU FILE CÂU HỎI
+                        </button>
+
+                        <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                            <p className="text-xs font-bold text-indigo-300 uppercase tracking-wider mb-2">Hướng dẫn</p>
+                            <div className="text-xs text-indigo-200/70 space-y-1">
+                                <p>1. Tải mẫu file ở trên</p>
+                                <p>2. Soạn câu hỏi theo mẫu trong file Word (.docx)</p>
+                                <p>3. <u>Gạch chân</u> hoặc <strong>in đậm</strong> đáp án đúng</p>
+                                <p>4. Bấm "Import" và chọn file</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         );
     }
 
-    if (phase === 'LOADING') {
-        return (
-            <div className="fixed inset-0 bg-black/80 z-[200] flex items-center justify-center">
-                <div className="text-center text-white">
-                    <LucideLoader2 className="w-16 h-16 animate-spin text-yellow-400 mx-auto mb-4" />
-                    <p className="text-2xl font-bold">Đang tạo câu hỏi bằng AI...</p>
-                    <p className="text-indigo-300 mt-2">Chủ đề: {topic} • {questionCount} câu • {difficulty}</p>
-                </div>
-            </div>
-        );
-    }
+
 
     if (phase === 'REVIEW') {
         return (
@@ -491,13 +447,6 @@ const MillionaireGame: React.FC<MillionaireGameProps> = ({ onClose, socket, room
             </div>
         );
     }
-
-    // Word import handler
-    const handleWordImport = (imported: GameQuestion[]) => {
-        setQuestions(imported);
-        setShowWordImporter(false);
-        setPhase('REVIEW');
-    };
 
     return (
         <>

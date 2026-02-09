@@ -7,7 +7,7 @@ import PDFSlideRenderer from './PDFSlideRenderer';
 import { dataService } from '../services/dataService';
 import { toast } from './Toast';
 import StudentManager from './StudentManager';
-import ApiKeyManager from './ApiKeyManager';
+
 
 const MAX_IMAGE_DIMENSION = 1920;
 const MAX_FILE_SIZE_MB = 10;
@@ -42,7 +42,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const autoSaveTimerRef = useRef<number | null>(null);
   const [showStudentManager, setShowStudentManager] = useState(false);
-  const [showApiKeyManager, setShowApiKeyManager] = useState(false);
+
 
   const formatRelativeTime = (dateStr?: string) => {
     if (!dateStr) return 'N/A';
@@ -398,9 +398,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           <button onClick={() => setShowStudentManager(true)} className="flex items-center gap-2 p-5 bg-emerald-50 text-emerald-700 rounded-2xl hover:bg-emerald-100 transition-all font-bold text-sm">
             <LucideUsers className="w-5 h-5" /> HS
           </button>
-          <button onClick={() => setShowApiKeyManager(true)} className="flex items-center gap-2 p-5 bg-amber-50 text-amber-700 rounded-2xl hover:bg-amber-100 transition-all font-bold text-sm">
-            🔑 KEY
-          </button>
+
           <button onClick={() => setShowSettings(true)} className="p-5 bg-slate-100 text-slate-600 rounded-2xl hover:bg-slate-200 transition-all">
             <LucideSettings className="w-6 h-6" />
           </button>
@@ -982,9 +980,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
       {showStudentManager && (
         <StudentManager teacherId={teacherId} onClose={() => setShowStudentManager(false)} />
       )}
-      {showApiKeyManager && (
-        <ApiKeyManager onClose={() => setShowApiKeyManager(false)} />
-      )}
+
     </div>
   );
 };
