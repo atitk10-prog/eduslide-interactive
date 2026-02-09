@@ -13,6 +13,7 @@ interface StudentViewProps { user: User; }
 
 const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [roomCode, setRoomCode] = useState('');
+  const [roomCodeConfirmed, setRoomCodeConfirmed] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
   const [sessionData, setSessionData] = useState<any>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -74,6 +75,18 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   useEffect(() => {
     isFocusModeRef.current = isFocusMode;
   }, [isFocusMode]);
+
+  // Read ?room= from URL (QR deep link)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get('room');
+    if (roomFromUrl) {
+      setRoomCode(roomFromUrl.toUpperCase());
+      setRoomCodeConfirmed(true);
+      // Clean URL without reload
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -854,16 +867,61 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       }
     };
 
+    const handleRoomCodeSubmit = async () => {
+      if (!roomCode.trim()) {
+        toast.error('Vui lòng nhập mã phòng');
+        return;
+      }
+      // Verify room exists
+      const session = await dataService.getSessionByRoomCode(roomCode.trim());
+      if (!session) {
+        toast.error('Không tìm thấy phòng học hoặc phòng đã đóng.');
+        return;
+      }
+      setRoomCodeConfirmed(true);
+    };
+
+    // Step 1: Room code input
+    if (!roomCodeConfirmed) {
+      return (
+        <div className="flex items-center justify-center h-[80vh] p-6">
+          <div className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm border text-center space-y-5">
+            <div>
+              <h2 className="text-2xl font-black uppercase tracking-tight">Vào lớp học</h2>
+              <p className="text-slate-400 text-xs mt-1">Nhập mã phòng từ giáo viên</p>
+            </div>
+            <div className="text-left space-y-1">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Mã phòng</label>
+              <input
+                value={roomCode}
+                onChange={e => setRoomCode(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === 'Enter' && handleRoomCodeSubmit()}
+                className="w-full text-center text-3xl font-black p-4 border-2 rounded-2xl outline-none border-slate-100 focus:border-indigo-600"
+                placeholder="EDU123"
+                autoFocus
+              />
+            </div>
+            <button onClick={handleRoomCodeSubmit} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all active:scale-95">TIẾP TỤC</button>
+          </div>
+        </div>
+      );
+    }
+
+    // Step 2: Student code input
     return (
       <div className="flex items-center justify-center h-[80vh] p-6">
         <div className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm border text-center space-y-4">
-          <h2 className="text-2xl font-black mb-2 uppercase tracking-tight">Vào lớp học</h2>
+          <div>
+            <h2 className="text-2xl font-black uppercase tracking-tight">Nhập mã học sinh</h2>
+            <p className="text-slate-400 text-xs mt-1">Phòng: <span className="text-indigo-600 font-black">{roomCode}</span>
+              <button onClick={() => setRoomCodeConfirmed(false)} className="ml-2 text-indigo-500 underline text-[10px]">Đổi phòng</button>
+            </p>
+          </div>
           <div className="text-left space-y-1">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Mã học sinh</label>
             <input value={studentCode} onChange={e => handleStudentCodeChange(e.target.value.toUpperCase())}
-              className={`w-full text-center text-lg font-bold p-3 border-2 rounded-xl outline-none transition-colors ${resolvedStudent ? 'border-green-400 bg-green-50' : 'border-slate-100 focus:border-indigo-600'
-                }`}
-              placeholder="Ví dụ: HS001" />
+              className={`w-full text-center text-lg font-bold p-3 border-2 rounded-xl outline-none transition-colors ${resolvedStudent ? 'border-green-400 bg-green-50' : 'border-slate-100 focus:border-indigo-600'}`}
+              placeholder="Ví dụ: HS001" autoFocus />
             {lookingUp && <p className="text-xs text-slate-400 pl-2 animate-pulse">Đang tra cứu...</p>}
             {resolvedStudent && (
               <div className="bg-green-50 border border-green-200 rounded-xl p-3 mt-2 text-left">
@@ -881,10 +939,6 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
               <input value={studentClass} onChange={e => setStudentClass(e.target.value)} className="w-full text-center text-lg font-bold p-3 border-2 rounded-xl outline-none border-slate-100 focus:border-indigo-600" placeholder="Ví dụ: 9A1" />
             </div>
           )}
-          <div className="text-left space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Mã phòng</label>
-            <input value={roomCode} onChange={e => setRoomCode(e.target.value.toUpperCase())} className="w-full text-center text-3xl font-black p-4 border-2 rounded-2xl outline-none border-slate-100 focus:border-indigo-600" placeholder="EDU123" />
-          </div>
           <button onClick={handleJoin} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all active:scale-95">THAM GIA NGAY</button>
         </div>
       </div>
