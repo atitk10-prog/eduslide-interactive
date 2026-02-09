@@ -234,6 +234,7 @@ const App: React.FC = () => {
             onStart={startPresentation}
             onAddSession={handleAddSession}
             onDeleteSession={handleDeleteSession}
+            teacherId={user?.id || ''}
           />
         )}
         {view === 'ADMIN_DASHBOARD' && user?.role === 'ADMIN' && (

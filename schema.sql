@@ -206,3 +206,35 @@ ON CONFLICT (id) DO UPDATE SET
   role = EXCLUDED.role,
   full_name = EXCLUDED.full_name;
 
+-- 7. Bảng danh sách học sinh (Mã HS, Họ tên, Lớp)
+CREATE TABLE IF NOT EXISTS public.edu_students (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_code TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  class_name TEXT NOT NULL,
+  teacher_id UUID REFERENCES public.edu_profiles(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  UNIQUE(student_code, teacher_id)
+);
+
+ALTER TABLE public.edu_students ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Students viewable by everyone" ON public.edu_students;
+CREATE POLICY "Students viewable by everyone" ON public.edu_students FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Teachers manage students" ON public.edu_students;
+CREATE POLICY "Teachers manage students" ON public.edu_students FOR ALL USING (true);
+
+-- 8. Bảng API Keys (xoay vòng nhiều key)
+CREATE TABLE IF NOT EXISTS public.edu_api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  api_key TEXT NOT NULL,
+  label TEXT DEFAULT 'Gemini Key',
+  is_active BOOLEAN DEFAULT true,
+  usage_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.edu_api_keys ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "API keys viewable by auth" ON public.edu_api_keys;
+CREATE POLICY "API keys viewable by auth" ON public.edu_api_keys FOR SELECT USING (auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "API keys managed by auth" ON public.edu_api_keys;
+CREATE POLICY "API keys managed by auth" ON public.edu_api_keys FOR ALL USING (auth.role() = 'authenticated');

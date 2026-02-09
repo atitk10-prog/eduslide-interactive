@@ -1,5 +1,5 @@
 {
-  "name": "eduslide-interactive",
+  "name": "ai-là-triệu-phú",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,15 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.40.0",
-    "@supabase/supabase-js": "^2.93.3",
-    "lucide-react": "^0.563.0",
-    "mammoth": "^1.11.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-pdf": "^10.3.0",
-    "recharts": "^3.7.0",
-    "xlsx": "^0.18.5"
+    "react-dom": "^19.2.0",
+    "react": "^19.2.0",
+    "@google/genai": "^1.28.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -667,6 +667,74 @@ export const dataService = {
 
         console.log("Supabase upload successful, Public URL:", data.publicUrl);
         return data.publicUrl;
+    },
+
+    // ============================================
+    // STUDENT MANAGEMENT (Mã HS)
+    // ============================================
+    async createStudents(teacherId: string, students: { student_code: string; full_name: string; class_name: string }[]): Promise<number> {
+        if (isMock) return students.length;
+        const rows = students.map(s => ({ ...s, teacher_id: teacherId }));
+        const { error } = await supabase.from('edu_students').upsert(rows, { onConflict: 'student_code,teacher_id' });
+        if (error) { console.error('createStudents error:', error); return 0; }
+        return students.length;
+    },
+
+    async getStudentsByTeacher(teacherId: string): Promise<{ id: string; student_code: string; full_name: string; class_name: string }[]> {
+        if (isMock) return [];
+        const { data, error } = await supabase.from('edu_students').select('*').eq('teacher_id', teacherId).order('class_name').order('full_name');
+        if (error || !data) return [];
+        return data;
+    },
+
+    async getStudentByCode(studentCode: string): Promise<{ student_code: string; full_name: string; class_name: string } | null> {
+        if (isMock) return null;
+        const { data, error } = await supabase.from('edu_students').select('student_code, full_name, class_name').eq('student_code', studentCode).limit(1).maybeSingle();
+        if (error || !data) return null;
+        return data;
+    },
+
+    async deleteStudent(id: string): Promise<boolean> {
+        if (isMock) return true;
+        const { error } = await supabase.from('edu_students').delete().eq('id', id);
+        return !error;
+    },
+
+    async deleteStudentsByTeacher(teacherId: string): Promise<boolean> {
+        if (isMock) return true;
+        const { error } = await supabase.from('edu_students').delete().eq('teacher_id', teacherId);
+        return !error;
+    },
+
+    // ============================================
+    // API KEY MANAGEMENT
+    // ============================================
+    async getApiKeys(): Promise<{ id: string; api_key: string; label: string; is_active: boolean; usage_count: number }[]> {
+        if (isMock) return [];
+        const { data, error } = await supabase.from('edu_api_keys').select('*').order('created_at');
+        if (error || !data) return [];
+        return data;
+    },
+
+    async addApiKey(apiKey: string, label?: string): Promise<boolean> {
+        if (isMock) return true;
+        const { error } = await supabase.from('edu_api_keys').insert({ api_key: apiKey, label: label || 'Gemini Key' });
+        return !error;
+    },
+
+    async removeApiKey(id: string): Promise<boolean> {
+        if (isMock) return true;
+        const { error } = await supabase.from('edu_api_keys').delete().eq('id', id);
+        return !error;
+    },
+
+    async getNextApiKey(): Promise<string | null> {
+        if (isMock) return null;
+        const { data, error } = await supabase.from('edu_api_keys').select('*').eq('is_active', true).order('usage_count', { ascending: true }).limit(1).maybeSingle();
+        if (error || !data) return null;
+        // Increment usage
+        await supabase.from('edu_api_keys').update({ usage_count: data.usage_count + 1 }).eq('id', data.id);
+        return data.api_key;
     }
 };
 

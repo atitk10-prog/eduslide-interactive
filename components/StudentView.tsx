@@ -7,6 +7,7 @@ import { dataService } from '../services/dataService';
 import { toast } from './Toast';
 import { supabase } from '../services/supabase';
 import PDFSlideRenderer from './PDFSlideRenderer';
+import MillionaireStudent from './games/MillionaireStudent';
 
 interface StudentViewProps { user: User; }
 
@@ -23,6 +24,9 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [tf4Values, setTf4Values] = useState<Record<number, string>>({});
   const [leaderboard, setLeaderboard] = useState<any[] | null>(null);
   const [studentClass, setStudentClass] = useState('');
+  const [studentCode, setStudentCode] = useState('');
+  const [resolvedStudent, setResolvedStudent] = useState<{ full_name: string; class_name: string } | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [showFireworks, setShowFireworks] = useState(false);
   const [isPresentationStarted, setIsPresentationStarted] = useState(false);
@@ -30,6 +34,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [drawingPaths, setDrawingPaths] = useState<any[]>([]);
   const [stats, setStats] = useState({ correct: 0, incorrect: 0 });
   const [isWaitingForReveal, setIsWaitingForReveal] = useState(false);
+  const [isInGame, setIsInGame] = useState(false);
 
   // Gamification State
   const [level, setLevel] = useState(1);
@@ -521,6 +526,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     socket.on('poll:start', handlePollStart);
     socket.on('poll:stop', handlePollStop);
     socket.on('focus:mode', handleFocusMode);
+    const handleGameStart = () => setIsInGame(true);
+    const handleGameEnd = () => setIsInGame(false);
+    socket.on('game:start', handleGameStart);
+    socket.on('game:end', handleGameEnd);
 
     return () => {
       window.removeEventListener('offline', handleOffline);
@@ -551,6 +560,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       socket.off('poll:start', handlePollStart);
       socket.off('poll:stop', handlePollStop);
       socket.off('focus:mode', handleFocusMode);
+      socket.off('game:start', handleGameStart);
+      socket.off('game:end', handleGameEnd);
       socket.leaveRoom();
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -696,6 +707,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
   const handleJoin = async () => {
     if (!roomCode.trim()) return;
+    if (!studentCode.trim()) {
+      toast.error('Vui lòng nhập mã học sinh');
+      return;
+    }
+
+    const displayName = resolvedStudent?.full_name || studentCode;
+    const displayClass = resolvedStudent?.class_name || studentClass || 'N/A';
 
     // 1. Find session using dataService (supports Local + Supabase)
     const session = await dataService.getSessionByRoomCode(roomCode);
@@ -723,12 +741,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
     setIsJoined(true);
     socket.joinRoom(roomCode);
-    socket.trackPresence({ name: user.name, class: studentClass || 'N/A' });
-    socket.emit('session:join', { roomCode, userName: user.name });
+    socket.trackPresence({ name: displayName, class: displayClass });
+    socket.emit('session:join', { roomCode, userName: displayName });
 
     // Save session state for auto-rejoin
     localStorage.setItem('eduslide_student_session', JSON.stringify({
       roomCode,
+      studentCode,
       timestamp: Date.now()
     }));
   };
@@ -775,20 +794,66 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   };
 
   if (!isJoined) {
+    const handleStudentCodeChange = async (code: string) => {
+      setStudentCode(code);
+      setResolvedStudent(null);
+      if (code.trim().length >= 2) {
+        setLookingUp(true);
+        const found = await dataService.getStudentByCode(code.trim());
+        if (found) {
+          setResolvedStudent({ full_name: found.full_name, class_name: found.class_name });
+          setStudentClass(found.class_name);
+        }
+        setLookingUp(false);
+      }
+    };
+
     return (
       <div className="flex items-center justify-center h-[80vh] p-6">
         <div className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm border text-center space-y-4">
           <h2 className="text-2xl font-black mb-2 uppercase tracking-tight">Vào lớp học</h2>
           <div className="text-left space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Lớp của bạn</label>
-            <input value={studentClass} onChange={e => setStudentClass(e.target.value)} className="w-full text-center text-lg font-bold p-3 border-2 rounded-xl outline-none border-slate-100 focus:border-indigo-600" placeholder="Ví dụ: 9A1" />
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Mã học sinh</label>
+            <input value={studentCode} onChange={e => handleStudentCodeChange(e.target.value.toUpperCase())}
+              className={`w-full text-center text-lg font-bold p-3 border-2 rounded-xl outline-none transition-colors ${resolvedStudent ? 'border-green-400 bg-green-50' : 'border-slate-100 focus:border-indigo-600'
+                }`}
+              placeholder="Ví dụ: HS001" />
+            {lookingUp && <p className="text-xs text-slate-400 pl-2 animate-pulse">Đang tra cứu...</p>}
+            {resolvedStudent && (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-3 mt-2 text-left">
+                <p className="font-bold text-green-800">{resolvedStudent.full_name}</p>
+                <p className="text-xs text-green-600">Lớp: {resolvedStudent.class_name}</p>
+              </div>
+            )}
+            {!resolvedStudent && studentCode.length >= 2 && !lookingUp && (
+              <p className="text-xs text-amber-500 pl-2">Không tìm thấy mã HS này. Nhập lớp thủ công:</p>
+            )}
           </div>
+          {!resolvedStudent && studentCode.length >= 2 && !lookingUp && (
+            <div className="text-left space-y-1">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Lớp của bạn</label>
+              <input value={studentClass} onChange={e => setStudentClass(e.target.value)} className="w-full text-center text-lg font-bold p-3 border-2 rounded-xl outline-none border-slate-100 focus:border-indigo-600" placeholder="Ví dụ: 9A1" />
+            </div>
+          )}
           <div className="text-left space-y-1">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">Mã phòng</label>
             <input value={roomCode} onChange={e => setRoomCode(e.target.value.toUpperCase())} className="w-full text-center text-3xl font-black p-4 border-2 rounded-2xl outline-none border-slate-100 focus:border-indigo-600" placeholder="EDU123" />
           </div>
           <button onClick={handleJoin} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all active:scale-95">THAM GIA NGAY</button>
         </div>
+      </div>
+    );
+  }
+
+  // Game overlay
+  if (isInGame) {
+    return (
+      <div className="h-full">
+        <MillionaireStudent
+          socket={socket}
+          studentName={user.name}
+          onGameEnd={() => setIsInGame(false)}
+        />
       </div>
     );
   }
