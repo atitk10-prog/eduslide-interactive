@@ -76,15 +76,20 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     isFocusModeRef.current = isFocusMode;
   }, [isFocusMode]);
 
-  // Read ?room= from URL (QR deep link)
+  // Read room code from URL (?room=) or from user prop (Login page)
   useEffect(() => {
+    // From URL (QR deep link)
     const params = new URLSearchParams(window.location.search);
     const roomFromUrl = params.get('room');
     if (roomFromUrl) {
       setRoomCode(roomFromUrl.toUpperCase());
       setRoomCodeConfirmed(true);
-      // Clean URL without reload
       window.history.replaceState({}, '', window.location.pathname);
+    }
+    // From Login page (user entered room code on landing page)
+    else if (user.roomCode) {
+      setRoomCode(user.roomCode.toUpperCase());
+      setRoomCodeConfirmed(true);
     }
   }, []);
 

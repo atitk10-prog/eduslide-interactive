@@ -58,6 +58,7 @@ export interface User {
   id: string;
   role: 'ADMIN' | 'TEACHER' | 'STUDENT';
   name: string;
+  roomCode?: string;
 }
 
 export interface QAQuestion {
