@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types';
 import { LucideUserCircle, LucideGraduationCap, LucideShieldCheck, LucideMail, LucideLock, LucideArrowRight, LucideLoader2, LucideEye, LucideEyeOff } from 'lucide-react';
 import { supabase } from '../services/supabase';
+import { dataService } from '../services/dataService';
 import { toast } from './Toast';
 
 interface LoginProps {
@@ -18,6 +19,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [selectedRole, setSelectedRole] = useState<'TEACHER' | 'STUDENT' | 'ADMIN' | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [resolvedStudent, setResolvedStudent] = useState<{ full_name: string; class_name: string } | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
 
@@ -29,16 +32,34 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   const handleStudentLogin = () => {
     if (!name.trim()) {
-      setValidationError('Vui lòng nhập tên của bạn');
+      setValidationError('Vui lòng nhập mã học sinh');
       nameInputRef.current?.focus();
+      return;
+    }
+    if (!resolvedStudent) {
+      setValidationError('Mã học sinh không tồn tại');
       return;
     }
     setValidationError('');
     onLogin({
       id: `std-${Math.random().toString(36).substr(2, 9)}`,
-      name: name,
+      name: resolvedStudent.full_name,
       role: 'STUDENT'
     });
+  };
+
+  const handleCodeChange = async (code: string) => {
+    setName(code);
+    setValidationError('');
+    setResolvedStudent(null);
+    if (code.trim().length >= 2) {
+      setLookingUp(true);
+      const found = await dataService.getStudentByCode(code.trim());
+      if (found) {
+        setResolvedStudent({ full_name: found.full_name, class_name: found.class_name });
+      }
+      setLookingUp(false);
+    }
   };
 
   const handleTeacherAuth = async (e: React.FormEvent) => {
@@ -188,7 +209,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
           </button>
 
-          <div className="bg-slate-50 p-6 rounded-[2rem] border-2 border-slate-100 space-y-4 flex flex-col shadow-inner">
+          <div className="bg-slate-50 p-6 rounded-[2rem] border-2 border-slate-100 space-y-3 flex flex-col shadow-inner">
             <div className="flex items-center gap-3">
               <LucideUserCircle className="w-6 h-6 text-indigo-600" />
               <span className="font-black text-slate-800 uppercase text-xs tracking-widest">HỌC SINH</span>
@@ -196,15 +217,22 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             <input
               type="text"
               ref={nameInputRef}
-              placeholder="Họ tên của bạn..."
+              placeholder="Nhập mã học sinh..."
               value={name}
-              onChange={(e) => { setName(e.target.value); setValidationError(''); }}
+              onChange={(e) => handleCodeChange(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleStudentLogin()}
-              className={`w-full px-4 py-3 rounded-xl bg-white border-2 ${validationError ? 'border-red-400' : 'border-slate-100'} focus:border-indigo-600 outline-none font-bold text-sm transition-colors`}
+              className={`w-full px-4 py-3 rounded-xl bg-white border-2 ${validationError ? 'border-red-400' : resolvedStudent ? 'border-green-400' : 'border-slate-100'} focus:border-indigo-600 outline-none font-bold text-sm transition-colors`}
               autoFocus
             />
-            {validationError && <p className="text-red-500 text-xs font-bold mt-1">{validationError}</p>}
-            <button onClick={handleStudentLogin} className="w-full bg-slate-900 text-white py-3 rounded-xl font-black text-[10px] tracking-widest hover:bg-indigo-600 transition-all active:scale-95 mt-auto">VÀO LỚP</button>
+            {lookingUp && <p className="text-indigo-500 text-xs font-bold animate-pulse">Đang tra cứu...</p>}
+            {resolvedStudent && (
+              <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-xs">
+                <p className="font-black text-green-700">{resolvedStudent.full_name}</p>
+                <p className="text-green-600">Lớp {resolvedStudent.class_name}</p>
+              </div>
+            )}
+            {validationError && <p className="text-red-500 text-xs font-bold">{validationError}</p>}
+            <button onClick={handleStudentLogin} disabled={!resolvedStudent} className="w-full bg-slate-900 text-white py-3 rounded-xl font-black text-[10px] tracking-widest hover:bg-indigo-600 transition-all active:scale-95 mt-auto disabled:opacity-40 disabled:cursor-not-allowed">VÀO LỚP</button>
           </div>
 
           <button onClick={() => setSelectedRole('ADMIN')} className="group bg-slate-800 p-8 rounded-[2rem] text-white flex flex-col items-center gap-4 transition-all hover:bg-slate-950 hover:scale-105 shadow-xl">
