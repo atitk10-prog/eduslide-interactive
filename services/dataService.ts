@@ -12,7 +12,11 @@ export const dataService = {
         }
 
         const { data: { session: authSession } } = await supabase.auth.getSession();
-        if (!authSession) return [];
+        if (!authSession) {
+            // Try refreshing the session first
+            const { data: refreshData } = await supabase.auth.refreshSession();
+            if (!refreshData.session) return [];
+        }
 
         let query = supabase
             .from('edu_sessions')
@@ -275,11 +279,12 @@ export const dataService = {
 
         try {
             // Cascade delete: remove all child records before deleting the session
-            // Order matters due to foreign key constraints
-            await supabase.from('edu_responses').delete().eq('session_id', sessionId);
-            await supabase.from('edu_qa_questions').delete().eq('session_id', sessionId);
-            await supabase.from('edu_polls').delete().eq('session_id', sessionId);
-            await supabase.from('edu_slides').delete().eq('session_id', sessionId);
+            // Continue even if child deletes fail (orphan cleanup)
+            const tables = ['edu_responses', 'edu_qa_questions', 'edu_polls', 'edu_slides'];
+            for (const table of tables) {
+                const { error: childErr } = await supabase.from(table).delete().eq('session_id', sessionId);
+                if (childErr) console.warn(`Warning: failed to delete from ${table}:`, childErr.message);
+            }
 
             const { error } = await supabase
                 .from('edu_sessions')

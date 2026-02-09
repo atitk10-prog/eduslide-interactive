@@ -265,7 +265,15 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       socket.emit('question:state', {
         isActive: true,
         questionId: activeQuestion.id,
-        duration: activeQuestion.duration
+        duration: activeQuestion.duration,
+        question: {
+          id: activeQuestion.id,
+          prompt: activeQuestion.prompt,
+          type: activeQuestion.type,
+          options: activeQuestion.options,
+          correctAnswer: activeQuestion.correctAnswer,
+          duration: activeQuestion.duration
+        }
       });
       setQuestionStartTime(Date.now());
       dataService.updateSession(session.id, { isActive: true, activeQuestionId: activeQuestion.id });
@@ -1792,47 +1800,48 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         </div>
 
         {/* Toolbar */}
-        <div className="bg-slate-900 border-t border-white/5 p-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button disabled={currentSlideIndex === 0} onClick={() => changeSlide(currentSlideIndex - 1)} className="p-5 bg-white/5 text-white rounded-2xl hover:bg-white/10 transition-all"><LucideChevronLeft /></button>
-            <div className="flex items-center px-6 h-16 bg-black/40 rounded-2xl text-white font-black text-lg">
+        <div className="bg-slate-900 border-t border-white/5 px-3 py-2 flex items-center justify-between gap-2">
+          {/* Left: Slide navigation */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button disabled={currentSlideIndex === 0} onClick={() => changeSlide(currentSlideIndex - 1)} className="p-2 bg-white/5 text-white rounded-xl hover:bg-white/10 transition-all disabled:opacity-30"><LucideChevronLeft className="w-4 h-4" /></button>
+            <div className="flex items-center px-3 h-9 bg-black/40 rounded-xl text-white font-black text-xs">
               {currentSlideIndex + 1} / {session.slides.length}
             </div>
-            <button disabled={currentSlideIndex === session.slides.length - 1} onClick={() => changeSlide(currentSlideIndex + 1)} className="p-5 bg-white/5 text-white rounded-2xl hover:bg-white/10 transition-all"><LucideChevronRight /></button>
+            <button disabled={currentSlideIndex === session.slides.length - 1} onClick={() => changeSlide(currentSlideIndex + 1)} className="p-2 bg-white/5 text-white rounded-xl hover:bg-white/10 transition-all disabled:opacity-30"><LucideChevronRight className="w-4 h-4" /></button>
           </div>
 
-          <div className="flex items-center gap-4">
+          {/* Center: Question + main actions */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-center">
             {totalQuestions > 0 && (
-              <div className="flex items-center gap-2">
-                {/* Question navigation */}
+              <div className="flex items-center gap-1">
                 {totalQuestions > 1 && (
-                  <div className="flex items-center gap-1 bg-white/5 rounded-2xl px-3 h-16 border border-white/10">
+                  <div className="flex items-center gap-0.5 bg-white/5 rounded-xl px-1.5 h-9 border border-white/10">
                     <button
                       disabled={activeQuestionIndex === 0}
                       onClick={() => { setActiveQuestionIndex(prev => prev - 1); setShowStats(false); setIsAnswerRevealed(false); }}
-                      className="p-2 text-white hover:bg-white/10 rounded-xl disabled:opacity-30 transition-all"
+                      className="p-1 text-white hover:bg-white/10 rounded-lg disabled:opacity-30 transition-all"
                     >
-                      <LucideChevronLeft className="w-5 h-5" />
+                      <LucideChevronLeft className="w-3.5 h-3.5" />
                     </button>
-                    <span className="text-white font-black text-sm px-2 min-w-[60px] text-center">
+                    <span className="text-white font-black text-[10px] px-1 min-w-[45px] text-center">
                       Câu {activeQuestionIndex + 1}/{totalQuestions}
                     </span>
                     <button
                       disabled={activeQuestionIndex === totalQuestions - 1}
                       onClick={() => { setActiveQuestionIndex(prev => prev + 1); setShowStats(false); setIsAnswerRevealed(false); }}
-                      className="p-2 text-white hover:bg-white/10 rounded-xl disabled:opacity-30 transition-all"
+                      className="p-1 text-white hover:bg-white/10 rounded-lg disabled:opacity-30 transition-all"
                     >
-                      <LucideChevronRight className="w-5 h-5" />
+                      <LucideChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}
                 {activeQuestion && (
                   <button
                     onClick={toggleQuestion}
-                    className={`flex items-center gap-3 h-16 px-10 rounded-2xl font-black text-lg transition-all shadow-xl ${isQuestionActive ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}
+                    className={`flex items-center gap-1.5 h-9 px-4 rounded-xl font-black text-xs transition-all shadow-lg ${isQuestionActive ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}
                   >
-                    {isQuestionActive ? <LucideStopCircle /> : <LucidePlayCircle />}
-                    <span>{isQuestionActive ? 'KẾT THÚC SỚM' : 'BẮT ĐẦU CÂU HỎI'}</span>
+                    {isQuestionActive ? <LucideStopCircle className="w-4 h-4" /> : <LucidePlayCircle className="w-4 h-4" />}
+                    <span>{isQuestionActive ? 'KẾT THÚC' : 'BẮT ĐẦU'}</span>
                   </button>
                 )}
               </div>
@@ -1848,55 +1857,53 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                   socket.emit('fullscreen:request', {});
                 }
               }}
-              className="flex items-center gap-3 h-16 bg-white/10 text-white px-8 rounded-2xl font-black text-lg hover:bg-white/20 transition-all shadow-xl"
-              title="Toàn màn hình & Đồng bộ học sinh"
+              className="p-2 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-all"
+              title="Toàn màn hình"
             >
-              <LucideMaximize2 />
+              <LucideMaximize2 className="w-4 h-4" />
             </button>
             <button
               onClick={() => setShowPollCreator(true)}
-              className="flex items-center gap-3 h-16 bg-amber-500 text-white px-8 rounded-2xl font-black text-lg hover:bg-amber-600 transition-all shadow-xl shadow-amber-900/20"
-              title="Bình chọn nhanh (Flash Poll)"
+              className="p-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-all"
+              title="Bình chọn nhanh"
             >
-              <LucideTrendingUp />
+              <LucideTrendingUp className="w-4 h-4" />
             </button>
             <button
               onClick={() => setShowQAPanel(!showQAPanel)}
-              className={`flex items-center gap-3 h-16 px-10 rounded-2xl font-black text-lg transition-all relative ${showQAPanel ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white hover:bg-white/10'}`}
+              className={`flex items-center gap-1 h-9 px-3 rounded-xl font-black text-xs transition-all relative ${showQAPanel ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white hover:bg-white/10'}`}
             >
-              <LucideMessageCircle /> Box {qaQuestions.length > 0 && <span className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-slate-900">{qaQuestions.length}</span>}
+              <LucideMessageCircle className="w-4 h-4" /> Box {qaQuestions.length > 0 && <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center border-2 border-slate-900">{qaQuestions.length}</span>}
             </button>
-            <button
-              onClick={() => setShowReportModal(true)}
-              className="flex items-center gap-3 h-16 bg-white/5 text-slate-400 px-6 rounded-2xl font-black text-lg hover:bg-white/10 hover:text-white transition-all"
-              title="Xem báo cáo chi tiết"
-            >
-              <LucideFlag /> BÁO CÁO
-            </button>
-            <button
-              onClick={() => setShowLeaderboard(!showLeaderboard)}
-              className={`flex items-center gap-3 h-16 px-10 rounded-2xl font-black text-lg transition-all ${showLeaderboard ? 'bg-yellow-500 text-slate-900 shadow-xl' : 'bg-white/5 text-white hover:bg-white/10'}`}
-            >
-              <LucideTrophy /> BXH
-            </button>
-            <button onClick={() => setShowStats(!showStats)} className="flex items-center gap-3 h-16 bg-white/5 text-white px-8 rounded-2xl font-black text-lg hover:bg-white/10 transition-all"><LucideChartBar /> THỐNG KÊ</button>
-            <button
-              onClick={() => setShowRandomPicker(true)}
-              className="flex items-center gap-3 h-16 bg-cyan-600 text-white px-6 rounded-2xl font-black text-sm hover:bg-cyan-700 transition-all shadow-lg"
-              title="Gọi tên ngẫu nhiên"
-            >
-              <LucideDice6 className="w-5 h-5" /> GỌI TÊN
-            </button>
-            <button
-              onClick={() => setShowGame(true)}
-              className="flex items-center gap-3 h-16 bg-purple-600 text-white px-6 rounded-2xl font-black text-sm hover:bg-purple-700 transition-all shadow-lg"
-              title="Ai Là Triệu Phú"
-            >
-              <LucideGamepad2 className="w-5 h-5" /> TRÒ CHƠI
-            </button>
-            <button onClick={exportToPDF} className="flex items-center gap-3 h-16 bg-white/5 text-white px-6 rounded-2xl font-black text-sm hover:bg-white/10 transition-all" title="Xuất báo cáo PDF"><LucideDownload className="w-5 h-5" /> PDF</button>
+
+            {/* Data group: BÁO CÁO + BXH + THỐNG KÊ */}
+            <div className="flex items-center bg-white/5 rounded-xl overflow-hidden border border-white/10">
+              <button onClick={() => setShowReportModal(true)} className="flex items-center gap-1 h-9 px-2.5 text-slate-400 font-bold text-[10px] hover:bg-white/10 hover:text-white transition-all" title="Báo cáo">
+                <LucideFlag className="w-3.5 h-3.5" /> BÁO CÁO
+              </button>
+              <div className="w-px h-5 bg-white/10"></div>
+              <button onClick={() => setShowLeaderboard(!showLeaderboard)} className={`flex items-center gap-1 h-9 px-2.5 font-bold text-[10px] transition-all ${showLeaderboard ? 'bg-yellow-500 text-slate-900' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>
+                <LucideTrophy className="w-3.5 h-3.5" /> BXH
+              </button>
+              <div className="w-px h-5 bg-white/10"></div>
+              <button onClick={() => setShowStats(!showStats)} className="flex items-center gap-1 h-9 px-2.5 text-slate-400 font-bold text-[10px] hover:bg-white/10 hover:text-white transition-all">
+                <LucideChartBar className="w-3.5 h-3.5" /> TK
+              </button>
+            </div>
+
+            {/* Tools group: GỌI TÊN + TRÒ CHƠI */}
+            <div className="flex items-center gap-1">
+              <button onClick={() => setShowRandomPicker(true)} className="flex items-center gap-1 h-9 bg-cyan-600 text-white px-3 rounded-xl font-bold text-[10px] hover:bg-cyan-700 transition-all" title="Gọi tên ngẫu nhiên">
+                <LucideDice6 className="w-3.5 h-3.5" /> GỌI TÊN
+              </button>
+              <button onClick={() => setShowGame(true)} className="flex items-center gap-1 h-9 bg-purple-600 text-white px-3 rounded-xl font-bold text-[10px] hover:bg-purple-700 transition-all" title="Trò chơi">
+                <LucideGamepad2 className="w-3.5 h-3.5" /> GAME
+              </button>
+            </div>
+
+            <button onClick={exportToPDF} className="p-2 bg-white/5 text-slate-400 rounded-xl hover:bg-white/10 hover:text-white transition-all" title="Xuất PDF"><LucideDownload className="w-4 h-4" /></button>
             <div className="relative group">
-              <button className="flex items-center gap-2 h-16 bg-white/5 text-slate-400 px-4 rounded-2xl font-black text-xs hover:bg-white/10 hover:text-white transition-all" title="Phím tắt">⌨️</button>
+              <button className="p-2 bg-white/5 text-slate-400 rounded-xl hover:bg-white/10 hover:text-white transition-all" title="Phím tắt">⌨️</button>
               <div className="absolute bottom-full mb-2 right-0 bg-slate-800 border border-white/10 rounded-xl p-4 hidden group-hover:block shadow-2xl z-50 w-52">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Phím tắt</p>
                 <div className="space-y-1.5 text-xs text-white font-bold">
@@ -1907,29 +1914,31 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 border-l border-white/10 ml-2 pl-4">
-              <button
-                onClick={toggleFocusMode}
-                className={`flex items-center gap-2 px-6 h-16 rounded-2xl font-black text-xs tracking-widest transition-all ${isFocusMode ? 'bg-orange-500 text-white animate-pulse' : 'bg-white/5 text-slate-400 hover:text-white'}`}
-              >
-                {isFocusMode ? <LucideLock className="w-5 h-5" /> : <LucideUnlock className="w-5 h-5 text-slate-500" />}
-                {isFocusMode ? 'CHẾ ĐỘ TẬP TRUNG' : 'TẬP TRUNG: TẮT'}
-              </button>
-              <button onClick={() => setShowSettingsModal(true)} className="p-5 bg-white/5 text-white rounded-2xl hover:bg-white/10 transition-all"><LucideSettings /></button>
-              <button
-                onClick={() => {
-                  if (!window.confirm('Bạn có chắc chắn muốn KẾT THÚC buổi học? Hành động này sẽ thông báo cho tất cả học sinh.')) return;
-                  socket.emit('session:end', { leaderboard: calculateLeaderboard() });
-                  dataService.updateSession(session.id, { isActive: false });
-                  localStorage.removeItem('eduslide_active_presentation');
-                  onExit();
-                }}
-                className="p-5 bg-red-500/20 text-red-400 rounded-2xl hover:bg-red-500/30 border border-red-500/30 transition-all"
-                title="Kết thúc buổi học"
-              >
-                <LucideFlag />
-              </button>
-            </div>
+          </div>
+
+          {/* Right: Focus + Settings + Exit */}
+          <div className="flex items-center gap-1.5 border-l border-white/10 pl-2 shrink-0">
+            <button
+              onClick={toggleFocusMode}
+              className={`flex items-center gap-1 px-3 h-9 rounded-xl font-bold text-[10px] tracking-wider transition-all ${isFocusMode ? 'bg-orange-500 text-white animate-pulse' : 'bg-white/5 text-slate-400 hover:text-white'}`}
+            >
+              {isFocusMode ? <LucideLock className="w-3.5 h-3.5" /> : <LucideUnlock className="w-3.5 h-3.5 text-slate-500" />}
+              {isFocusMode ? 'TẬP TRUNG' : 'TT: TẮT'}
+            </button>
+            <button onClick={() => setShowSettingsModal(true)} className="p-2 bg-white/5 text-white rounded-xl hover:bg-white/10 transition-all" title="Cài đặt"><LucideSettings className="w-4 h-4" /></button>
+            <button
+              onClick={() => {
+                if (!window.confirm('Bạn có chắc chắn muốn KẾT THÚC buổi học? Hành động này sẽ thông báo cho tất cả học sinh.')) return;
+                socket.emit('session:end', { leaderboard: calculateLeaderboard() });
+                dataService.updateSession(session.id, { isActive: false });
+                localStorage.removeItem('eduslide_active_presentation');
+                onExit();
+              }}
+              className="p-2 bg-red-500/20 text-red-400 rounded-xl hover:bg-red-500/30 border border-red-500/30 transition-all"
+              title="Kết thúc buổi học"
+            >
+              <LucideFlag className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>

@@ -17,6 +17,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [sessionData, setSessionData] = useState<any>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isQuestionActive, setIsQuestionActive] = useState(false);
+  const [activeQuestionData, setActiveQuestionData] = useState<any>(null);
   const [isTimeout, setIsTimeout] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, any>>({});
@@ -166,7 +167,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       setIsQuestionActive(false);
       setIsTimeout(false);
       setRevealData(null);
-      setRevealData(null);
+      setActiveQuestionData(null);
+      setIsWaitingForReveal(false);
     };
 
     // Auto-rejoin from localStorage
@@ -212,9 +214,13 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     const handleQuestionState = (data: any) => {
       setIsQuestionActive(data.isActive);
       if (data.isActive) {
+        // Store the full question data sent by teacher
+        if (data.question) {
+          setActiveQuestionData(data.question);
+        }
         setRevealData(null);
         setIsTimeout(false);
-        setTimeLeft(data.duration || 0);
+        setTimeLeft(data.duration || data.question?.duration || 30);
         setTf4Values({}); // Reset values when new question opens
         setShortAnswer('');
         if (timerRef.current) clearInterval(timerRef.current);
@@ -404,8 +410,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
           if (freshSession.activeQuestionId) {
             setIsQuestionActive(true);
-            const q = freshSession.slides[freshSession.currentSlideIndex]?.questions.find((q: any) => q.id === freshSession.activeQuestionId);
+            const q = freshSession.slides[freshSession.currentSlideIndex]?.questions.find((q: any) => q.id === freshSession.activeQuestionId)
+              || freshSession.slides.flatMap((s: any) => s.questions || []).find((q: any) => q.id === freshSession.activeQuestionId);
             if (q) {
+              setActiveQuestionData(q);
               setTimeLeft(q.duration || 30);
             } else {
               setTimeLeft(30);
@@ -594,12 +602,18 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           setIsQuestionActive(isActive);
 
           if (isActive) {
-            const q = sessionData.slides[newData.current_slide_index]?.questions.find((q: any) => q.id === newData.active_question_id);
+            const slideIdx = newData.current_slide_index ?? currentSlideIndex;
+            const q = sessionData.slides[slideIdx]?.questions.find((q: any) => q.id === newData.active_question_id);
             if (q) {
+              setActiveQuestionData(q);
               setTimeLeft(q.duration || 30);
             } else {
               setTimeLeft(30);
             }
+            setRevealData(null);
+            setIsTimeout(false);
+          } else {
+            setIsWaitingForReveal(true);
           }
         }
 
@@ -622,8 +636,35 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           setCurrentSlideIndex(data.currentSlideIndex || 0);
           setIsPresentationStarted(data.isStarted);
         } else if (type === 'question:state') {
+          // Use the same full handler logic as socketEmulator
           setIsQuestionActive(data.isActive);
-          if (!data.isActive && data.isTimeout) setIsTimeout(true);
+          if (data.isActive) {
+            if (data.question) setActiveQuestionData(data.question);
+            setRevealData(null);
+            setIsTimeout(false);
+            const dur = data.duration || data.question?.duration || 30;
+            setTimeLeft(dur);
+            setTf4Values({});
+            setShortAnswer('');
+            // Start countdown timer
+            if (timerRef.current) clearInterval(timerRef.current);
+            timerRef.current = window.setInterval(() => {
+              setTimeLeft(prev => {
+                if (prev <= 1) {
+                  clearInterval(timerRef.current!);
+                  setIsQuestionActive(false);
+                  setIsWaitingForReveal(true);
+                  setIsTimeout(true);
+                  return 0;
+                }
+                return prev - 1;
+              });
+            }, 1000);
+          } else {
+            if (timerRef.current) clearInterval(timerRef.current);
+            if (data.isTimeout) setIsTimeout(true);
+            setIsWaitingForReveal(true);
+          }
         }
       })
       .subscribe();
@@ -737,7 +778,12 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     setSessionData(session);
     setCurrentSlideIndex(session.currentSlideIndex || 0);
     setIsPresentationStarted(session.isActive);
-    if (session.activeQuestionId) setIsQuestionActive(true);
+    if (session.activeQuestionId) {
+      setIsQuestionActive(true);
+      // Find and set the active question data so it renders correctly
+      const activeQ = session.slides.flatMap((s: any) => s.questions || []).find((q: any) => q.id === session.activeQuestionId);
+      if (activeQ) setActiveQuestionData(activeQ);
+    }
 
     setIsJoined(true);
     socket.joinRoom(roomCode);
@@ -859,7 +905,10 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   }
 
   const currentSlide = sessionData?.slides[currentSlideIndex];
-  const question: Question | undefined = isQuestionActive || isTimeout ? currentSlide?.questions[0] : undefined;
+  // Use activeQuestionData from teacher if available, otherwise fallback to current slide
+  const question: Question | undefined = isQuestionActive || isTimeout
+    ? (activeQuestionData || currentSlide?.questions?.find((q: any) => q.id === sessionData?.activeQuestionId) || currentSlide?.questions?.[0])
+    : undefined;
 
   return (
     <div className="h-full bg-slate-50 flex flex-col font-sans">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LucideUpload, LucideTrash2, LucideSearch, LucideUsers, LucideX, LucideDownload, LucideAlertTriangle } from 'lucide-react';
+import { LucideUpload, LucideTrash2, LucideSearch, LucideUsers, LucideX, LucideDownload, LucideAlertTriangle, LucideCheck, LucideLoader2, LucideFileWarning } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { toast } from './Toast';
 import * as XLSX from 'xlsx';
@@ -9,6 +9,20 @@ interface Student {
     student_code: string;
     full_name: string;
     class_name: string;
+}
+
+interface RowError {
+    row: number;
+    student_code: string;
+    full_name: string;
+    class_name: string;
+    reason: string;
+}
+
+interface UploadResult {
+    total: number;
+    success: number;
+    errors: RowError[];
 }
 
 interface StudentManagerProps {
@@ -22,6 +36,8 @@ const StudentManager: React.FC<StudentManagerProps> = ({ teacherId, onClose }) =
     const [searchQuery, setSearchQuery] = useState('');
     const [filterClass, setFilterClass] = useState('');
     const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
     const [showDeleteAll, setShowDeleteAll] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,49 +52,134 @@ const StudentManager: React.FC<StudentManagerProps> = ({ teacherId, onClose }) =
         setLoading(false);
     };
 
+    const validateRow = (row: any[], rowIndex: number): { valid: boolean; parsed: { student_code: string; full_name: string; class_name: string } | null; error: RowError | null } => {
+        const code = String(row[0] || '').trim();
+        const name = String(row[1] || '').trim();
+        const cls = String(row[2] || '').trim();
+
+        if (!code && !name && !cls) {
+            return { valid: false, parsed: null, error: null }; // Empty row, skip silently
+        }
+
+        const reasons: string[] = [];
+        if (!code) reasons.push('Thiếu mã HS');
+        if (!name) reasons.push('Thiếu họ tên');
+        if (!cls) reasons.push('Thiếu lớp');
+        if (code && code.length < 2) reasons.push('Mã HS quá ngắn (< 2 ký tự)');
+        if (code && /[^a-zA-Z0-9_\-]/.test(code)) reasons.push('Mã HS chứa ký tự đặc biệt');
+
+        if (reasons.length > 0) {
+            return {
+                valid: false,
+                parsed: null,
+                error: { row: rowIndex + 1, student_code: code, full_name: name, class_name: cls, reason: reasons.join(', ') }
+            };
+        }
+
+        return { valid: true, parsed: { student_code: code, full_name: name, class_name: cls }, error: null };
+    };
+
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
         setUploading(true);
+        setUploadProgress(0);
+        setUploadResult(null);
+
         try {
+            // Step 1: Read file (10%)
+            setUploadProgress(10);
             const data = await file.arrayBuffer();
             const workbook = XLSX.read(data);
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-            // Skip header row, parse columns: Mã HS | Họ tên | Lớp
-            const parsed: { student_code: string; full_name: string; class_name: string }[] = [];
+            // Step 2: Validate rows (10% → 50%)
+            setUploadProgress(20);
+            const validStudents: { student_code: string; full_name: string; class_name: string }[] = [];
+            const errors: RowError[] = [];
+            const duplicateCodes = new Set<string>();
+
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (!row || row.length < 3) continue;
-                const code = String(row[0] || '').trim();
-                const name = String(row[1] || '').trim();
-                const cls = String(row[2] || '').trim();
-                if (code && name && cls) {
-                    parsed.push({ student_code: code, full_name: name, class_name: cls });
+                if (!row || row.length === 0) continue;
+
+                const result = validateRow(row, i);
+                if (result.error) {
+                    errors.push(result.error);
+                } else if (result.parsed) {
+                    // Check duplicates within file
+                    if (duplicateCodes.has(result.parsed.student_code.toLowerCase())) {
+                        errors.push({
+                            row: i + 1,
+                            student_code: result.parsed.student_code,
+                            full_name: result.parsed.full_name,
+                            class_name: result.parsed.class_name,
+                            reason: 'Mã HS trùng lặp trong file'
+                        });
+                    } else {
+                        duplicateCodes.add(result.parsed.student_code.toLowerCase());
+                        validStudents.push(result.parsed);
+                    }
+                }
+                setUploadProgress(20 + Math.round((i / rows.length) * 30));
+            }
+
+            // Step 3: Upload valid students in batches (50% → 90%)
+            setUploadProgress(50);
+            let successCount = 0;
+
+            if (validStudents.length > 0) {
+                const BATCH_SIZE = 50;
+                for (let i = 0; i < validStudents.length; i += BATCH_SIZE) {
+                    const batch = validStudents.slice(i, i + BATCH_SIZE);
+                    const count = await dataService.createStudents(teacherId, batch);
+                    successCount += count;
+                    setUploadProgress(50 + Math.round(((i + batch.length) / validStudents.length) * 40));
                 }
             }
 
-            if (parsed.length === 0) {
-                toast.error('File không có dữ liệu hợp lệ. Cần 3 cột: Mã HS | Họ tên | Lớp');
-                setUploading(false);
-                return;
+            // Step 4: Done (100%)
+            setUploadProgress(100);
+            const result: UploadResult = {
+                total: rows.length - 1,
+                success: successCount,
+                errors
+            };
+            setUploadResult(result);
+
+            if (successCount > 0) {
+                loadStudents();
             }
 
-            const count = await dataService.createStudents(teacherId, parsed);
-            if (count > 0) {
-                toast.success(`Đã tải lên ${count} học sinh thành công!`);
-                loadStudents();
+            if (errors.length === 0) {
+                toast.success(`Tải lên thành công ${successCount} học sinh!`);
+            } else if (successCount > 0) {
+                toast.warning(`${successCount} thành công, ${errors.length} lỗi`);
             } else {
-                toast.error('Lỗi khi lưu dữ liệu học sinh');
+                toast.error(`Không có học sinh nào hợp lệ. ${errors.length} lỗi.`);
             }
+
         } catch (err) {
             console.error(err);
             toast.error('Lỗi đọc file Excel. Vui lòng kiểm tra định dạng.');
         }
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    const exportErrors = () => {
+        if (!uploadResult?.errors.length) return;
+        const wsData = [
+            ['Dòng', 'Mã HS', 'Họ tên', 'Lớp', 'Lỗi'],
+            ...uploadResult.errors.map(e => [e.row, e.student_code, e.full_name, e.class_name, e.reason])
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        ws['!cols'] = [{ wch: 6 }, { wch: 12 }, { wch: 25 }, { wch: 10 }, { wch: 40 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Loi');
+        XLSX.writeFile(wb, 'HS_loi_can_sua.xlsx');
     };
 
     const handleDelete = async (id: string) => {
@@ -107,7 +208,6 @@ const StudentManager: React.FC<StudentManagerProps> = ({ teacherId, onClose }) =
         XLSX.writeFile(wb, 'Mau_danh_sach_HS.xlsx');
     };
 
-    // Get unique class names for filter
     const classNames = [...new Set(students.map(s => s.class_name))].sort();
 
     const filtered = students.filter(s => {
@@ -142,7 +242,7 @@ const StudentManager: React.FC<StudentManagerProps> = ({ teacherId, onClose }) =
                     <div className="flex flex-wrap gap-2">
                         <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
                             className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-all text-sm">
-                            <LucideUpload className="w-4 h-4" />
+                            {uploading ? <LucideLoader2 className="w-4 h-4 animate-spin" /> : <LucideUpload className="w-4 h-4" />}
                             {uploading ? 'Đang tải...' : 'Tải lên Excel'}
                         </button>
                         <button onClick={downloadTemplate}
@@ -159,6 +259,77 @@ const StudentManager: React.FC<StudentManagerProps> = ({ teacherId, onClose }) =
                         )}
                     </div>
                     <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
+
+                    {/* Upload Progress */}
+                    {uploading && (
+                        <div className="space-y-1.5">
+                            <div className="flex justify-between text-xs font-bold text-indigo-600">
+                                <span>{uploadProgress < 20 ? 'Đọc file...' : uploadProgress < 50 ? 'Kiểm tra dữ liệu...' : uploadProgress < 90 ? 'Đang lưu...' : 'Hoàn tất!'}</span>
+                                <span>{uploadProgress}%</span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                <div className="h-full bg-indigo-500 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Upload Result Summary */}
+                    {uploadResult && !uploading && (
+                        <div className={`rounded-xl p-3 border ${uploadResult.errors.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    {uploadResult.errors.length > 0 ? (
+                                        <LucideFileWarning className="w-5 h-5 text-amber-600" />
+                                    ) : (
+                                        <LucideCheck className="w-5 h-5 text-green-600" />
+                                    )}
+                                    <span className="font-bold text-sm text-slate-800">Kết quả tải lên</span>
+                                </div>
+                                <button onClick={() => setUploadResult(null)} className="text-slate-400 hover:text-slate-600">
+                                    <LucideX className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <div className="flex gap-4 text-xs font-bold mb-2">
+                                <span className="text-slate-500">Tổng: {uploadResult.total}</span>
+                                <span className="text-green-600">✓ Thành công: {uploadResult.success}</span>
+                                {uploadResult.errors.length > 0 && (
+                                    <span className="text-red-600">✗ Lỗi: {uploadResult.errors.length}</span>
+                                )}
+                            </div>
+
+                            {/* Error Details */}
+                            {uploadResult.errors.length > 0 && (
+                                <>
+                                    <div className="max-h-32 overflow-y-auto bg-white rounded-lg border border-amber-200">
+                                        <table className="w-full text-xs">
+                                            <thead>
+                                                <tr className="bg-amber-100/50 text-left text-amber-800">
+                                                    <th className="px-2 py-1 font-bold">Dòng</th>
+                                                    <th className="px-2 py-1 font-bold">Mã HS</th>
+                                                    <th className="px-2 py-1 font-bold">Họ tên</th>
+                                                    <th className="px-2 py-1 font-bold">Lỗi</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {uploadResult.errors.map((err, i) => (
+                                                    <tr key={i} className="border-t border-amber-100">
+                                                        <td className="px-2 py-1 text-amber-700 font-mono">{err.row}</td>
+                                                        <td className="px-2 py-1 font-mono">{err.student_code || '—'}</td>
+                                                        <td className="px-2 py-1">{err.full_name || '—'}</td>
+                                                        <td className="px-2 py-1 text-red-600">{err.reason}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <button onClick={exportErrors}
+                                        className="mt-2 flex items-center gap-1.5 text-xs font-bold text-amber-700 hover:text-amber-900 bg-amber-100 px-3 py-1.5 rounded-lg hover:bg-amber-200 transition-all">
+                                        <LucideDownload className="w-3.5 h-3.5" /> Xuất danh sách lỗi (.xlsx)
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    )}
 
                     {/* Search + Filter */}
                     <div className="flex gap-2">
