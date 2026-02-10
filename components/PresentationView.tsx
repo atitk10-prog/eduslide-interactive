@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Session, AnswerResponse, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff, LucideLock, LucideUnlock, LucideDice6, LucideGamepad2, LucideZoomIn, LucideZoomOut } from 'lucide-react';
+import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff, LucideLock, LucideUnlock, LucideDice6, LucideGamepad2, LucideZoomIn, LucideZoomOut, LucideMove } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import RandomPicker from './RandomPicker';
 import MillionaireGame from './games/MillionaireGame';
@@ -59,6 +59,11 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [isSyncingFullscreen, setIsSyncingFullscreen] = useState(false);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [slideZoom, setSlideZoom] = useState(1);
+  const [slidePanX, setSlidePanX] = useState(0);
+  const [slidePanY, setSlidePanY] = useState(0);
+  const [isDraggingSlide, setIsDraggingSlide] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
 
   // Focus Mode Tab Tracking
   const [tabViolations, setTabViolations] = useState<{ name: string, awayAt: number, reported: boolean }[]>([]);
@@ -801,50 +806,64 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
         {/* Main Stage */}
         <div className={`flex-1 relative flex items-center justify-center bg-black overflow-hidden ${screenStream ? 'p-2' : 'p-10'}`}>
-          {/* Drawing Controls (Floating) */}
+          {/* Drawing Toggle + Controls (Floating) */}
           {isPresentationStarted && (
-            <div className="absolute top-1/2 -translate-y-1/2 left-6 z-40 flex flex-col gap-3 bg-slate-900/90 backdrop-blur-xl p-3 rounded-[2rem] border border-white/10 shadow-2xl">
+            <div className="absolute top-1/2 -translate-y-1/2 left-6 z-40 flex flex-col gap-3">
+              {/* Toggle Drawing Mode Button */}
               <button
-                onClick={() => setIsEraser(false)}
-                className={`p-4 rounded-2xl transition-all ${!isEraser ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                onClick={() => setIsDrawingMode(!isDrawingMode)}
+                className={`p-4 rounded-2xl transition-all shadow-2xl border ${isDrawingMode ? 'bg-indigo-600 text-white border-indigo-400 shadow-indigo-500/30' : 'bg-slate-900/90 backdrop-blur-xl text-slate-400 hover:text-white border-white/10'}`}
+                title={isDrawingMode ? 'Tắt vẽ (dùng chuột cuộn zoom, kéo di chuyển)' : 'Bật vẽ'}
               >
                 <LucidePencil className="w-5 h-5" />
               </button>
-              <button
-                onClick={() => setIsEraser(true)}
-                className={`p-4 rounded-2xl transition-all ${isEraser ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-              >
-                <LucideEraser className="w-5 h-5" />
-              </button>
-              <div className="w-full h-px bg-white/10 my-1" />
-              {['#ef4444', '#10b981', '#6366f1', '#f59e0b', '#ffffff'].map(color => (
-                <button
-                  key={color}
-                  onClick={() => { setBrushColor(color); setIsEraser(false); }}
-                  className={`w-10 h-10 rounded-full border-2 transition-all ${brushColor === color && !isEraser ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-60 hover:opacity-100'}`}
-                  style={{ backgroundColor: color }}
-                />
-              ))}
-              <div className="w-full h-px bg-white/10 my-1" />
-              <div className="flex flex-col gap-2 items-center">
-                {[2, 4, 8].map(size => (
+
+              {/* Drawing Tools - only show when drawing mode is ON */}
+              {isDrawingMode && (
+                <div className="flex flex-col gap-3 bg-slate-900/90 backdrop-blur-xl p-3 rounded-[2rem] border border-white/10 shadow-2xl animate-in slide-in-from-left-3 duration-200">
                   <button
-                    key={size}
-                    onClick={() => setBrushWidth(size)}
-                    className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all ${brushWidth === size ? 'bg-white text-slate-900 border-white font-black text-xs' : 'text-slate-400 border-white/10 hover:border-white/30 text-[10px]'}`}
+                    onClick={() => setIsEraser(false)}
+                    className={`p-4 rounded-2xl transition-all ${!isEraser ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
                   >
-                    {size === 2 ? 'S' : size === 4 ? 'M' : 'L'}
+                    <LucidePencil className="w-5 h-5" />
                   </button>
-                ))}
-              </div>
-              <div className="w-full h-px bg-white/10 my-1" />
-              <button
-                onClick={clearCanvas}
-                className="p-4 text-red-400 hover:bg-red-500/10 rounded-2xl transition-all"
-                title="Xoá tất cả vẽ"
-              >
-                <LucideTrash2 className="w-5 h-5" />
-              </button>
+                  <button
+                    onClick={() => setIsEraser(true)}
+                    className={`p-4 rounded-2xl transition-all ${isEraser ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                  >
+                    <LucideEraser className="w-5 h-5" />
+                  </button>
+                  <div className="w-full h-px bg-white/10 my-1" />
+                  {['#ef4444', '#10b981', '#6366f1', '#f59e0b', '#ffffff'].map(color => (
+                    <button
+                      key={color}
+                      onClick={() => { setBrushColor(color); setIsEraser(false); }}
+                      className={`w-10 h-10 rounded-full border-2 transition-all ${brushColor === color && !isEraser ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-60 hover:opacity-100'}`}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                  <div className="w-full h-px bg-white/10 my-1" />
+                  <div className="flex flex-col gap-2 items-center">
+                    {[2, 4, 8].map(size => (
+                      <button
+                        key={size}
+                        onClick={() => setBrushWidth(size)}
+                        className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all ${brushWidth === size ? 'bg-white text-slate-900 border-white font-black text-xs' : 'text-slate-400 border-white/10 hover:border-white/30 text-[10px]'}`}
+                      >
+                        {size === 2 ? 'S' : size === 4 ? 'M' : 'L'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="w-full h-px bg-white/10 my-1" />
+                  <button
+                    onClick={clearCanvas}
+                    className="p-4 text-red-400 hover:bg-red-500/10 rounded-2xl transition-all"
+                    title="Xoá tất cả vẽ"
+                  >
+                    <LucideTrash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1053,8 +1072,38 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </div>
           )}
 
-          <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-            <div className="relative w-full h-full flex items-center justify-center transition-transform duration-200" style={{ transform: `scale(${slideZoom})` }}>
+          <div
+            className={`relative w-full h-full flex items-center justify-center overflow-hidden ${!isDrawingMode && slideZoom > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
+            onWheel={(e) => {
+              e.preventDefault();
+              const delta = e.deltaY > 0 ? -0.15 : 0.15;
+              setSlideZoom(z => {
+                const newZ = Math.min(Math.max(z + delta, 0.5), 4);
+                if (newZ <= 1) { setSlidePanX(0); setSlidePanY(0); }
+                return newZ;
+              });
+            }}
+            onMouseDown={(e) => {
+              if (isDrawingMode || slideZoom <= 1) return;
+              e.preventDefault();
+              setIsDraggingSlide(true);
+              setDragStart({ x: e.clientX - slidePanX, y: e.clientY - slidePanY });
+            }}
+            onMouseMove={(e) => {
+              if (!isDraggingSlide) return;
+              setSlidePanX(e.clientX - dragStart.x);
+              setSlidePanY(e.clientY - dragStart.y);
+            }}
+            onMouseUp={() => setIsDraggingSlide(false)}
+            onMouseLeave={() => setIsDraggingSlide(false)}
+          >
+            <div
+              className="relative w-full h-full flex items-center justify-center"
+              style={{
+                transform: `scale(${slideZoom}) translate(${slidePanX / slideZoom}px, ${slidePanY / slideZoom}px)`,
+                transition: isDraggingSlide ? 'none' : 'transform 0.2s ease-out'
+              }}
+            >
               {screenStream ? (
                 <div className="w-full h-full relative group">
                   <video
@@ -1076,49 +1125,37 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                 <img key={currentSlide.id} src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-lg shadow-2xl" />
               )}
 
-              {/* Drawing Canvas Overlay — inside zoom wrapper so it scales with slide */}
+              {/* Drawing Canvas Overlay — only intercepts mouse when drawing mode is ON */}
               {isPresentationStarted && (
                 <canvas
                   ref={canvasRef}
-                  className="absolute inset-0 w-full h-full z-10 cursor-crosshair touch-none"
+                  className={`absolute inset-0 w-full h-full z-10 touch-none ${isDrawingMode ? 'cursor-crosshair' : 'pointer-events-none'}`}
                   width={1920}
                   height={1080}
-                  onMouseDown={startDrawing}
-                  onMouseMove={draw}
-                  onMouseUp={stopDrawing}
-                  onMouseLeave={stopDrawing}
-                  onTouchStart={startDrawing}
-                  onTouchMove={draw}
-                  onTouchEnd={stopDrawing}
+                  onMouseDown={isDrawingMode ? startDrawing : undefined}
+                  onMouseMove={isDrawingMode ? draw : undefined}
+                  onMouseUp={isDrawingMode ? stopDrawing : undefined}
+                  onMouseLeave={isDrawingMode ? stopDrawing : undefined}
+                  onTouchStart={isDrawingMode ? startDrawing : undefined}
+                  onTouchMove={isDrawingMode ? draw : undefined}
+                  onTouchEnd={isDrawingMode ? stopDrawing : undefined}
                 />
               )}
             </div>
 
-            {/* Zoom Controls — outside zoom wrapper so they stay fixed size */}
-            <div className="absolute top-3 right-3 z-20 flex flex-col gap-1 opacity-40 hover:opacity-100 transition-opacity">
-              <button
-                onClick={() => setSlideZoom(z => Math.min(z + 0.25, 3))}
-                className="p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg transition-all"
-                title="Phóng to"
-              >
-                <LucideZoomIn className="w-4 h-4" />
-              </button>
-              {slideZoom !== 1 && (
+            {/* Zoom indicator — shows when zoomed */}
+            {slideZoom !== 1 && (
+              <div className="absolute top-3 right-3 z-20 flex items-center gap-1">
                 <button
-                  onClick={() => setSlideZoom(1)}
-                  className="px-1.5 py-0.5 bg-black/60 hover:bg-black/80 text-white rounded-lg text-[9px] font-black text-center transition-all"
+                  onClick={() => { setSlideZoom(1); setSlidePanX(0); setSlidePanY(0); }}
+                  className="px-2.5 py-1 bg-black/70 hover:bg-black/90 text-white rounded-lg text-[10px] font-black transition-all flex items-center gap-1.5"
+                  title="Reset zoom"
                 >
-                  {Math.round(slideZoom * 100)}%
+                  <LucideZoomOut className="w-3.5 h-3.5" />
+                  {Math.round(slideZoom * 100)}% — click to reset
                 </button>
-              )}
-              <button
-                onClick={() => setSlideZoom(z => Math.max(z - 0.25, 0.5))}
-                className="p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg transition-all"
-                title="Thu nhỏ"
-              >
-                <LucideZoomOut className="w-4 h-4" />
-              </button>
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Focus Mode Student Tracking Panel */}
@@ -2043,8 +2080,6 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
               onClick={() => {
                 if (!window.confirm('Bạn có chắc chắn muốn KẾT THÚC buổi học? Hành động này sẽ thông báo cho tất cả học sinh.')) return;
                 socket.emit('session:end', { leaderboard: calculateLeaderboard() });
-                dataService.updateSession(session.id, { isActive: false });
-                localStorage.removeItem('eduslide_active_presentation');
                 onExit();
               }}
               className="p-2 bg-red-500/20 text-red-400 rounded-xl hover:bg-red-500/30 border border-red-500/30 transition-all"

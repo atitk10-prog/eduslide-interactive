@@ -258,9 +258,18 @@ const App: React.FC = () => {
           <PresentationView
             session={currentSession}
             onExit={async () => {
-              await dataService.updateSession(currentSession.id, { isActive: false });
-              localStorage.removeItem('eduslide_active_presentation');
-              setView('DASHBOARD');
+              try {
+                await dataService.updateSession(currentSession.id, { isActive: false });
+              } catch (e) {
+                console.error('Failed to deactivate session:', e);
+              } finally {
+                localStorage.removeItem('eduslide_active_presentation');
+                setCurrentSession(null);
+                setView('DASHBOARD');
+                // Refresh sessions list
+                const updated = await dataService.getSessions();
+                if (updated) setSessions(updated);
+              }
             }}
           />
         )}

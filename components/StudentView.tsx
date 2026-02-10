@@ -964,7 +964,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           <div>
             <h2 className="text-2xl font-black uppercase tracking-tight">Nhập mã học sinh</h2>
             <p className="text-slate-400 text-xs mt-1">Phòng: <span className="text-indigo-600 font-black">{roomCode}</span>
-              <button onClick={() => setRoomCodeConfirmed(false)} className="ml-2 text-indigo-500 underline text-[10px]">Đổi phòng</button>
+              <button onClick={() => { setRoomCodeConfirmed(false); setRoomCode(''); }} className="ml-2 text-indigo-500 underline text-[10px]">Đổi phòng</button>
             </p>
           </div>
           <div className="text-left space-y-1">
@@ -1349,8 +1349,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
             )}
           </div>
         ) : isPresentationStarted && currentSlide ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-4 animate-in fade-in duration-500 p-4">
-            <div className="relative w-full max-w-3xl aspect-video flex items-center justify-center bg-black/5 rounded-2xl overflow-hidden shadow-inner">
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 animate-in fade-in duration-500 p-2">
+            <div className="relative flex-1 w-full flex items-center justify-center bg-black/5 rounded-2xl overflow-hidden shadow-inner">
               {currentSlide.pdfSource ? (
                 <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
               ) : currentSlide.imageUrl ? (
