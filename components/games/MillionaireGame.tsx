@@ -208,59 +208,68 @@ HƯỚNG DẪN:
 
     if (phase === 'SETUP') {
         return (
-            <div className="fixed inset-0 bg-black/80 z-[200] flex items-center justify-center p-4">
-                <div className="bg-gradient-to-br from-indigo-950 via-blue-950 to-purple-950 rounded-3xl shadow-2xl w-full max-w-lg p-8 relative border border-indigo-700/30">
-                    <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white p-2"><LucideX className="w-6 h-6" /></button>
+            <>
+                <div className="fixed inset-0 bg-black/80 z-[200] flex items-center justify-center p-4">
+                    <div className="bg-gradient-to-br from-indigo-950 via-blue-950 to-purple-950 rounded-3xl shadow-2xl w-full max-w-lg p-8 relative border border-indigo-700/30">
+                        <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white p-2"><LucideX className="w-6 h-6" /></button>
 
-                    <div className="text-center mb-6">
-                        <h2 className="text-3xl font-black text-yellow-400">🎮 AI LÀ TRIỆU PHÚ</h2>
-                        <p className="text-indigo-300 text-sm mt-1">{joinedStudents.length} học sinh đang chờ</p>
-                    </div>
-
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Timer (giây)</label>
-                                <select value={timerDuration} onChange={e => setTimerDuration(Number(e.target.value))}
-                                    className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white outline-none">
-                                    {[15, 20, 30, 45, 60].map(n => <option key={n} value={n}>{n}s</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Độ khó</label>
-                                <select value={difficulty} onChange={e => setDifficulty(e.target.value as Difficulty)}
-                                    className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white outline-none">
-                                    <option value="Dễ">Dễ</option>
-                                    <option value="Vừa">Vừa</option>
-                                    <option value="Khó">Khó</option>
-                                </select>
-                            </div>
+                        <div className="text-center mb-6">
+                            <h2 className="text-3xl font-black text-yellow-400">🎮 AI LÀ TRIỆU PHÚ</h2>
+                            <p className="text-indigo-300 text-sm mt-1">{joinedStudents.length} học sinh đang chờ</p>
                         </div>
 
-                        {error && <p className="text-red-400 text-sm bg-red-500/10 rounded-xl p-3 flex items-center gap-2"><LucideAlertTriangle className="w-4 h-4" />{error}</p>}
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Timer (giây)</label>
+                                    <select value={timerDuration} onChange={e => setTimerDuration(Number(e.target.value))}
+                                        className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white outline-none">
+                                        {[15, 20, 30, 45, 60].map(n => <option key={n} value={n}>{n}s</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Độ khó</label>
+                                    <select value={difficulty} onChange={e => setDifficulty(e.target.value as Difficulty)}
+                                        className="w-full bg-white/10 border border-indigo-600/50 rounded-xl p-3 text-white outline-none">
+                                        <option value="Dễ">Dễ</option>
+                                        <option value="Vừa">Vừa</option>
+                                        <option value="Khó">Khó</option>
+                                    </select>
+                                </div>
+                            </div>
 
-                        <button onClick={() => setShowWordImporter(true)}
-                            className="w-full bg-yellow-500 text-black font-black py-4 rounded-2xl text-lg hover:bg-yellow-400 transition-all flex items-center justify-center gap-2">
-                            <LucideFileText className="w-5 h-5" /> IMPORT CÂU HỎI TỪ WORD
-                        </button>
+                            {error && <p className="text-red-400 text-sm bg-red-500/10 rounded-xl p-3 flex items-center gap-2"><LucideAlertTriangle className="w-4 h-4" />{error}</p>}
 
-                        <button onClick={downloadTemplate}
-                            className="w-full bg-white/10 text-white font-bold py-3 rounded-2xl text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2 border border-white/10">
-                            <LucideDownload className="w-4 h-4" /> TẢI MẪU FILE CÂU HỎI
-                        </button>
+                            <button onClick={() => setShowWordImporter(true)}
+                                className="w-full bg-yellow-500 text-black font-black py-4 rounded-2xl text-lg hover:bg-yellow-400 transition-all flex items-center justify-center gap-2">
+                                <LucideFileText className="w-5 h-5" /> IMPORT CÂU HỎI TỪ WORD
+                            </button>
 
-                        <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                            <p className="text-xs font-bold text-indigo-300 uppercase tracking-wider mb-2">Hướng dẫn</p>
-                            <div className="text-xs text-indigo-200/70 space-y-1">
-                                <p>1. Tải mẫu file ở trên</p>
-                                <p>2. Soạn câu hỏi theo mẫu trong file Word (.docx)</p>
-                                <p>3. <u>Gạch chân</u> hoặc <strong>in đậm</strong> đáp án đúng</p>
-                                <p>4. Bấm "Import" và chọn file</p>
+                            <button onClick={downloadTemplate}
+                                className="w-full bg-white/10 text-white font-bold py-3 rounded-2xl text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2 border border-white/10">
+                                <LucideDownload className="w-4 h-4" /> TẢI MẪU FILE CÂU HỎI
+                            </button>
+
+                            <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                                <p className="text-xs font-bold text-indigo-300 uppercase tracking-wider mb-2">Hướng dẫn</p>
+                                <div className="text-xs text-indigo-200/70 space-y-1">
+                                    <p>1. Tải mẫu file ở trên</p>
+                                    <p>2. Soạn câu hỏi theo mẫu trong file Word (.docx)</p>
+                                    <p>3. <u>Gạch chân</u> hoặc <strong>in đậm</strong> đáp án đúng</p>
+                                    <p>4. Bấm "Import" và chọn file</p>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+
+                {showWordImporter && (
+                    <WordImporter
+                        onImport={handleWordImport}
+                        onClose={() => setShowWordImporter(false)}
+                    />
+                )}
+            </>
         );
     }
 
@@ -448,16 +457,7 @@ HƯỚNG DẪN:
         );
     }
 
-    return (
-        <>
-            {showWordImporter && (
-                <WordImporter
-                    onImport={handleWordImport}
-                    onClose={() => setShowWordImporter(false)}
-                />
-            )}
-        </>
-    );
+    return null;
 };
 
 export default MillionaireGame;

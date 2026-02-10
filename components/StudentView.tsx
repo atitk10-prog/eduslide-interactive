@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Question, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock, LucideSmartphone, LucideRotateCw, LucideBarChart3 } from 'lucide-react';
+import { LucideAlertTriangle, LucideCheck, LucideCheckCircle2, LucideChevronLeft, LucideClock, LucideLayout, LucideMessageSquare, LucideSend, LucideTrophy, LucideUsers, LucideX, LucideImage, LucideHeart, LucideMessageCircle, LucideWifiOff, LucideMaximize2, LucideLock, LucideSmartphone, LucideBarChart3 } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { toast } from './Toast';
 import { supabase } from '../services/supabase';
@@ -37,6 +37,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
   const [stats, setStats] = useState({ correct: 0, incorrect: 0 });
   const [isWaitingForReveal, setIsWaitingForReveal] = useState(false);
   const [isInGame, setIsInGame] = useState(false);
+  const [questionMinimized, setQuestionMinimized] = useState(false);
 
   // Gamification State
   const [level, setLevel] = useState(1);
@@ -238,6 +239,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
         }
         setRevealData(null);
         setIsTimeout(false);
+        setQuestionMinimized(false);
         setTimeLeft(data.duration || data.question?.duration || 30);
         setTf4Values({}); // Reset values when new question opens
         setShortAnswer('');
@@ -256,9 +258,16 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
         }, 1000);
       } else {
         if (timerRef.current) clearInterval(timerRef.current);
-        if (data.isTimeout) setIsTimeout(true);
         setIsQuestionActive(false);
-        setIsWaitingForReveal(true);
+        if (data.isTimeout) {
+          // Timer expired — keep question visible, wait for teacher to reveal
+          setIsTimeout(true);
+          setIsWaitingForReveal(true);
+        } else {
+          // Teacher manually closed question — hide on student side
+          setIsTimeout(false);
+          setIsWaitingForReveal(false);
+        }
       }
     };
 
@@ -448,13 +457,21 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     };
 
     const handleFocusMode = (data: { enabled: boolean }) => {
+      console.log('[StudentView] focus:mode received', data);
       setIsFocusMode(data.enabled);
+      isFocusModeRef.current = data.enabled; // Sync ref immediately, don't wait for useEffect
       if (data.enabled) {
         setAlertMessage("CHẾ ĐỘ TẬP TRUNG: ĐÃ KÍCH HOẠT");
         setTimeout(() => setAlertMessage(null), 3000);
       } else {
         setAlertMessage("CHẾ ĐỘ TẬP TRUNG: ĐÃ TẮT");
         setTimeout(() => setAlertMessage(null), 3000);
+        // Clear any warnings
+        setFocusWarningCountdown(null);
+        if (focusTimerRef.current) {
+          clearInterval(focusTimerRef.current);
+          focusTimerRef.current = null;
+        }
       }
     };
 
@@ -471,9 +488,11 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     };
 
     const handleVisibilityChange = () => {
+      console.log('[StudentView] visibilitychange:', document.visibilityState, 'focusMode:', isFocusModeRef.current);
       if (document.visibilityState === 'hidden') {
         // Only alert teacher when focus mode is ON (use ref to avoid stale closure)
         if (isFocusModeRef.current) {
+          console.log('[StudentView] Tab hidden while focus mode ON, emitting tab-away');
           socket.emit('student:alert', { name: user.name, reason: 'TAB_SWITCH' });
           socket.emit('student:tab-away', { name: user.name, timestamp: Date.now() });
           // Start a warning countdown for the student
@@ -491,6 +510,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       } else {
         // Student came back
         if (isFocusModeRef.current) {
+          console.log('[StudentView] Tab visible while focus mode ON, emitting tab-back');
           socket.emit('student:tab-back', { name: user.name, timestamp: Date.now() });
           // Clear the countdown warning
           if (focusTimerRef.current) {
@@ -793,17 +813,42 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
     // Prime audio
     playDing();
 
+    // 2. Sync to teacher's current state from DB
+    const slideIdx = session.currentSlideIndex ?? 0;
+    console.log('[StudentView] Joining session, currentSlideIndex from DB:', slideIdx, 'activeQuestionId:', session.activeQuestionId);
+
     setSessionData(session);
-    setCurrentSlideIndex(session.currentSlideIndex || 0);
+    setCurrentSlideIndex(slideIdx);
     setIsPresentationStarted(session.isActive);
+
     if (session.activeQuestionId) {
       setIsQuestionActive(true);
-      // Find and set the active question data so it renders correctly
+      // Find active question across ALL slides (not just current)
       const activeQ = session.slides.flatMap((s: any) => s.questions || []).find((q: any) => q.id === session.activeQuestionId);
-      if (activeQ) setActiveQuestionData(activeQ);
+      if (activeQ) {
+        setActiveQuestionData(activeQ);
+        setTimeLeft(activeQ.duration || 30);
+        // Start timer for late joiner
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = window.setInterval(() => {
+          setTimeLeft(prev => {
+            if (prev <= 1) {
+              clearInterval(timerRef.current!);
+              setIsQuestionActive(false);
+              setIsWaitingForReveal(true);
+              setIsTimeout(true);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
     }
 
     setIsJoined(true);
+    // Update user.name with resolved student name
+    user.name = displayName;
+    localStorage.setItem('eduslide_user', JSON.stringify(user));
     socket.joinRoom(roomCode);
     socket.trackPresence({ name: displayName, class: displayClass });
     socket.emit('session:join', { roomCode, userName: displayName });
@@ -965,9 +1010,12 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
   const currentSlide = sessionData?.slides[currentSlideIndex];
   // Use activeQuestionData from teacher if available, otherwise fallback to current slide
-  const question: Question | undefined = isQuestionActive || isTimeout
+  // Show question when: actively answering, or timed out waiting for reveal
+  const questionData: Question | undefined = (isQuestionActive || isTimeout || isWaitingForReveal)
     ? (activeQuestionData || currentSlide?.questions?.find((q: any) => q.id === sessionData?.activeQuestionId) || currentSlide?.questions?.[0])
     : undefined;
+  // Student can minimize question; when minimized, question is hidden but a floating bar shows
+  const question = questionMinimized ? undefined : questionData;
 
   return (
     <div className="h-full bg-slate-50 flex flex-col font-sans">
@@ -1066,6 +1114,14 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
         ) : question ? (
           <div className="w-full max-w-lg space-y-6">
             <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
+              {/* Minimize button */}
+              <button
+                onClick={() => setQuestionMinimized(true)}
+                className="absolute top-3 right-3 z-10 p-1.5 text-slate-300 hover:text-slate-500 hover:bg-slate-100 rounded-full transition-all"
+                title="Ẩn câu hỏi"
+              >
+                <LucideX className="w-4 h-4" />
+              </button>
               {/* Enhanced Countdown Progress Bar */}
               {isQuestionActive && (
                 <div className="absolute top-0 left-0 w-full h-1.5">
@@ -1293,8 +1349,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
             )}
           </div>
         ) : isPresentationStarted && currentSlide ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-6 animate-in fade-in duration-500">
-            <div className="flex-1 w-full flex items-center justify-center relative bg-black/5 rounded-3xl overflow-hidden shadow-inner p-4 min-h-[300px]">
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 animate-in fade-in duration-500 p-4">
+            <div className="relative w-full max-w-3xl aspect-video flex items-center justify-center bg-black/5 rounded-2xl overflow-hidden shadow-inner">
               {currentSlide.pdfSource ? (
                 <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
               ) : currentSlide.imageUrl ? (
@@ -1315,8 +1371,8 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
               />
             </div>
 
-            <div className="bg-indigo-50 border-2 border-indigo-100 p-6 rounded-[2rem] w-full max-w-md text-center">
-              <p className="text-indigo-600 font-black text-lg">Lớp học đang diễn ra</p>
+            <div className="bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl w-full max-w-md text-center">
+              <p className="text-indigo-600 font-black text-base">Lớp học đang diễn ra</p>
               <p className="text-indigo-400 text-sm font-medium italic">Hãy theo dõi màn hình chính và trả lời khi có câu hỏi xuất hiện.</p>
             </div>
           </div>
@@ -1503,33 +1559,34 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           </div>
         )}
 
-        {/* Mobile Rotate Prompt */}
+        {/* Mobile Rotate Hint - non-blocking banner */}
         {showRotatePrompt && (
-          <div className="fixed inset-0 z-[200] bg-slate-950/95 backdrop-blur-sm flex flex-col items-center justify-center p-8 animate-in fade-in duration-300">
-            <button
-              onClick={() => { setDismissedRotate(true); setShowRotatePrompt(false); }}
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-white/10 transition-all"
-            >
-              <LucideX className="w-5 h-5" />
-            </button>
-            <div className="animate-spin-slow mb-6">
-              <LucideSmartphone className="w-16 h-16 text-indigo-400 rotate-90" />
+          <div
+            onClick={() => { setDismissedRotate(true); setShowRotatePrompt(false); }}
+            className="fixed top-0 left-0 right-0 z-[200] bg-indigo-600 text-white px-4 py-3 flex items-center justify-center gap-3 cursor-pointer shadow-lg animate-in slide-in-from-top duration-300"
+          >
+            <LucideSmartphone className="w-5 h-5 rotate-90 shrink-0" />
+            <span className="text-sm font-bold">Xoay ngang điện thoại để xem tốt hơn</span>
+            <LucideX className="w-4 h-4 shrink-0 opacity-60" />
+          </div>
+        )}
+
+        {/* Floating bar when question is minimized */}
+        {questionMinimized && questionData && (
+          <div
+            onClick={() => setQuestionMinimized(false)}
+            className="fixed bottom-4 left-4 right-4 z-[100] bg-indigo-600 text-white px-5 py-4 rounded-2xl flex items-center justify-between gap-3 cursor-pointer shadow-2xl animate-in slide-in-from-bottom duration-300"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="bg-white/20 p-2 rounded-xl shrink-0">
+                <LucideMessageCircle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-widest opacity-70">Câu hỏi đang mở</p>
+                <p className="text-sm font-bold truncate">{questionData.prompt}</p>
+              </div>
             </div>
-            <h3 className="text-white text-lg font-black text-center mb-2">XIN HÃY XOAY NGANG</h3>
-            <p className="text-slate-400 text-sm text-center mb-6">Xoay điện thoại ngang để xem bài giảng tốt hơn</p>
-            <button
-              onClick={requestFullscreenAndLockLandscape}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 px-8 rounded-2xl shadow-lg active:scale-95 transition-all flex items-center gap-3 touch-manipulation text-base mb-3"
-            >
-              <LucideRotateCw className="w-5 h-5" />
-              Tự động xoay ngang
-            </button>
-            <button
-              onClick={() => { setDismissedRotate(true); setShowRotatePrompt(false); }}
-              className="text-slate-500 hover:text-white text-sm font-medium transition-all"
-            >
-              Bỏ qua
-            </button>
+            <span className="text-xs font-black bg-white/20 px-3 py-1.5 rounded-xl shrink-0">MỞ</span>
           </div>
         )}
 

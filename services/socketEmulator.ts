@@ -73,6 +73,7 @@ class SocketEmulator {
   }
 
   public emit(type: string, data: any) {
+    console.log('[Socket] emit:', type, data);
     // 1. Local trigger
     this.trigger(type, data);
 
@@ -90,7 +91,11 @@ class SocketEmulator {
   }
 
   private trigger(type: string, data: any) {
-    this.listeners.get(type)?.forEach((cb) => cb(data));
+    const listeners = this.listeners.get(type);
+    if (listeners && listeners.size > 0) {
+      console.log('[Socket] trigger:', type, '(', listeners.size, 'listeners)');
+    }
+    listeners?.forEach((cb) => cb(data));
   }
 }
 

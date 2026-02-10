@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Session, AnswerResponse, QuestionType } from '../types';
 import { socket } from '../services/socketEmulator';
-import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff, LucideLock, LucideUnlock, LucideDice6, LucideGamepad2 } from 'lucide-react';
+import { LucideChevronLeft, LucideChevronRight, LucideX, LucideChartBar, LucideMessageSquare, LucidePlayCircle, LucideStopCircle, LucideUsers, LucideClock, LucideFlag, LucideTrophy, LucideAward, LucideDownload, LucideRotateCcw, LucideCheckCircle2, LucideTrendingUp, LucideMaximize2, LucideMinimize2, LucideScreenShare, LucideMonitorOff, LucidePencil, LucideEraser, LucideTrash2, LucideStar, LucideMessageCircle, LucideSettings, LucideAlertTriangle, LucideWifiOff, LucideLock, LucideUnlock, LucideDice6, LucideGamepad2, LucideZoomIn, LucideZoomOut } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import RandomPicker from './RandomPicker';
 import MillionaireGame from './games/MillionaireGame';
@@ -58,6 +58,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
   const [isFocusMode, setIsFocusMode] = useState(initialSession.isFocusMode || false);
   const [isSyncingFullscreen, setIsSyncingFullscreen] = useState(false);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [slideZoom, setSlideZoom] = useState(1);
 
   // Focus Mode Tab Tracking
   const [tabViolations, setTabViolations] = useState<{ name: string, awayAt: number, reported: boolean }[]>([]);
@@ -288,6 +289,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
   const toggleFocusMode = async () => {
     const newState = !isFocusMode;
+    console.log('[PresentationView] toggleFocusMode:', newState);
     setIsFocusMode(newState);
     await dataService.updateSession(session.id, { isFocusMode: newState });
     socket.emit('focus:mode', { enabled: newState, roomCode: session.roomCode });
@@ -348,15 +350,19 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         const ctx = canvas.getContext('2d');
 
         if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
-          canvas.width = 1920; // Full HD for crisp text & UI
-          canvas.height = 1080; // 16:9 aspect
+          // Use native video resolution (capped at 1920x1080) to avoid blurry upscaling
+          const nativeW = vid.videoWidth || 1920;
+          const nativeH = vid.videoHeight || 1080;
+          const scale = Math.min(1920 / nativeW, 1080 / nativeH, 1);
+          canvas.width = Math.round(nativeW * scale);
+          canvas.height = Math.round(nativeH * scale);
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
           // High quality JPEG for readable screen content
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
           socket.emit('screen:frame', { image: dataUrl });
         }
-      }, 250); // 4 FPS — smoother viewing
+      }, 150); // ~7 FPS — smoother viewing
 
       stream.getVideoTracks()[0].onended = () => {
         stopScreenShare();
@@ -481,6 +487,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     };
 
     const handleStudentTabAway = (data: { name: string, timestamp: number }) => {
+      console.log('[PresentationView] student:tab-away received', data);
       setTabViolations(prev => {
         if (prev.find(v => v.name === data.name)) return prev;
         return [...prev, { name: data.name, awayAt: Date.now(), reported: false }];
@@ -1046,67 +1053,102 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </div>
           )}
 
-          <div className="relative w-full h-full flex items-center justify-center">
-            {screenStream ? (
-              <div className="w-full h-full relative group">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-contain"
-                />
-                <div className="absolute top-4 left-4 bg-red-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full flex items-center gap-2 animate-pulse z-20">
-                  <div className="w-2 h-2 bg-white rounded-full" /> ĐANG CHIA SẺ MÀN HÌNH
+          <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+            <div className="relative w-full h-full flex items-center justify-center transition-transform duration-200" style={{ transform: `scale(${slideZoom})` }}>
+              {screenStream ? (
+                <div className="w-full h-full relative group">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-contain"
+                  />
+                  <div className="absolute top-4 left-4 bg-red-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full flex items-center gap-2 animate-pulse z-20">
+                    <div className="w-2 h-2 bg-white rounded-full" /> ĐANG CHIA SẺ MÀN HÌNH
+                  </div>
                 </div>
-              </div>
-            ) : currentSlide.pdfSource ? (
-              <div className="w-full h-full flex items-center justify-center">
-                <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
-              </div>
-            ) : (
-              <img key={currentSlide.id} src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-lg shadow-2xl" />
-            )}
+              ) : currentSlide.pdfSource ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <PDFSlideRenderer url={currentSlide.pdfSource} pageNumber={currentSlide.pdfPage || 1} />
+                </div>
+              ) : (
+                <img key={currentSlide.id} src={currentSlide.imageUrl} className="max-h-full max-w-full object-contain rounded-lg shadow-2xl" />
+              )}
 
-            {/* Drawing Canvas Overlay */}
-            {isPresentationStarted && (
-              <canvas
-                ref={canvasRef}
-                className="absolute inset-0 w-full h-full z-10 cursor-crosshair touch-none"
-                width={1920}
-                height={1080}
-                onMouseDown={startDrawing}
-                onMouseMove={draw}
-                onMouseUp={stopDrawing}
-                onMouseLeave={stopDrawing}
-                onTouchStart={startDrawing}
-                onTouchMove={draw}
-                onTouchEnd={stopDrawing}
-              />
-            )}
+              {/* Drawing Canvas Overlay — inside zoom wrapper so it scales with slide */}
+              {isPresentationStarted && (
+                <canvas
+                  ref={canvasRef}
+                  className="absolute inset-0 w-full h-full z-10 cursor-crosshair touch-none"
+                  width={1920}
+                  height={1080}
+                  onMouseDown={startDrawing}
+                  onMouseMove={draw}
+                  onMouseUp={stopDrawing}
+                  onMouseLeave={stopDrawing}
+                  onTouchStart={startDrawing}
+                  onTouchMove={draw}
+                  onTouchEnd={stopDrawing}
+                />
+              )}
+            </div>
+
+            {/* Zoom Controls — outside zoom wrapper so they stay fixed size */}
+            <div className="absolute top-3 right-3 z-20 flex flex-col gap-1 opacity-40 hover:opacity-100 transition-opacity">
+              <button
+                onClick={() => setSlideZoom(z => Math.min(z + 0.25, 3))}
+                className="p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg transition-all"
+                title="Phóng to"
+              >
+                <LucideZoomIn className="w-4 h-4" />
+              </button>
+              {slideZoom !== 1 && (
+                <button
+                  onClick={() => setSlideZoom(1)}
+                  className="px-1.5 py-0.5 bg-black/60 hover:bg-black/80 text-white rounded-lg text-[9px] font-black text-center transition-all"
+                >
+                  {Math.round(slideZoom * 100)}%
+                </button>
+              )}
+              <button
+                onClick={() => setSlideZoom(z => Math.max(z - 0.25, 0.5))}
+                className="p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg transition-all"
+                title="Thu nhỏ"
+              >
+                <LucideZoomOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Focus Mode Student Tracking Panel */}
           {isFocusMode && isPresentationStarted && (
-            <div className="absolute top-4 right-4 w-56 bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl z-30 animate-in slide-in-from-right-5 duration-300 max-h-[70vh] flex flex-col">
+            <div className="absolute top-4 right-4 w-64 bg-slate-900/95 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl z-30 animate-in slide-in-from-right-5 duration-300 max-h-[70vh] flex flex-col">
               <div className="p-4 border-b border-white/10">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
                   <h4 className="text-[10px] font-black text-white uppercase tracking-widest">CHẾ ĐỘ TẬP TRUNG</h4>
                 </div>
-                <div className="flex gap-3 text-[9px] font-bold">
-                  <span className="text-green-400">{joinedStudents.filter(s => !tabViolations.find(v => v.name === s.name)).length} trong tab</span>
-                  <span className="text-red-400">{tabViolations.length} ngoài tab</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-green-500/20 border border-green-500/30 rounded-lg px-2 py-1.5 text-center">
+                    <span className="text-lg font-black text-green-400">{joinedStudents.filter(s => !tabViolations.find(v => v.name === s.name)).length}</span>
+                    <p className="text-[8px] font-black text-green-500 uppercase">Trong tab</p>
+                  </div>
+                  <div className="bg-red-500/20 border border-red-500/30 rounded-lg px-2 py-1.5 text-center">
+                    <span className="text-lg font-black text-red-400">{tabViolations.length}</span>
+                    <p className="text-[8px] font-black text-red-500 uppercase">Ngoài tab</p>
+                  </div>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-1.5 custom-scrollbar">
-                {/* Sort: away students first, then in-tab students */}
+                {/* Sort: away students first (most recent first), then in-tab students */}
                 {[...joinedStudents]
                   .sort((a, b) => {
                     const aAway = tabViolations.find(v => v.name === a.name);
                     const bAway = tabViolations.find(v => v.name === b.name);
                     if (aAway && !bAway) return -1;
                     if (!aAway && bAway) return 1;
+                    if (aAway && bAway) return bAway.awayAt - aAway.awayAt;
                     return 0;
                   })
                   .map((student, idx) => {
@@ -1117,22 +1159,27 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                     return (
                       <div
                         key={idx}
-                        className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all ${isAway
-                          ? 'bg-red-500/20 border border-red-500/30 animate-pulse'
-                          : 'bg-white/5 border border-transparent'
+                        className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all ${isAway
+                          ? 'bg-red-600/30 border-2 border-red-500/60 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+                          : 'bg-green-500/10 border border-green-500/20'
                           }`}
                       >
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${isAway ? 'bg-red-500' : 'bg-green-500'}`} />
+                        <div className={`w-3 h-3 rounded-full shrink-0 ${isAway ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]'}`} />
                         <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-bold truncate ${isAway ? 'text-red-300' : 'text-slate-300'}`}>
+                          <p className={`text-xs font-bold truncate ${isAway ? 'text-red-200' : 'text-green-300'}`}>
                             {student.name}
                           </p>
                           {isAway && (
-                            <p className="text-[9px] font-black text-red-400">
-                              Rời tab {awaySeconds}s{violation.reported ? ' ⚠️ VI PHẠM' : ''}
+                            <p className="text-[9px] font-black text-red-400 flex items-center gap-1">
+                              ⚠️ Rời tab {awaySeconds}s{violation.reported ? ' — VI PHẠM!' : ''}
                             </p>
                           )}
                         </div>
+                        {isAway && (
+                          <span className="bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 animate-pulse uppercase">
+                            Out
+                          </span>
+                        )}
                       </div>
                     );
                   })}
@@ -1145,7 +1192,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
           {/* Real-time Response Tracker (Sidebar) */}
           {(isQuestionActive || showStats) && (
-            <div className="absolute top-40 right-10 w-64 bg-slate-900/80 backdrop-blur-md rounded-[2rem] border border-white/10 p-6 shadow-2xl animate-in slide-in-from-right-5 duration-500 z-20">
+            <div className="absolute top-40 right-10 w-72 bg-slate-900/90 backdrop-blur-md rounded-[2rem] border border-white/10 p-6 shadow-2xl animate-in slide-in-from-right-5 duration-500 z-30">
               <div className="flex items-center justify-between mb-4">
                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trạng thái ( {responses.filter(r => r.questionId === activeQuestion?.id).length} / {joinedStudents.length} )</h4>
               </div>
@@ -1155,6 +1202,37 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                   <p className="text-xs font-bold text-white line-clamp-2">{activeQuestion.prompt}</p>
                 </div>
               )}
+              {/* Correct/Incorrect summary after reveal */}
+              {isAnswerRevealed && activeQuestion && (() => {
+                const answeredResponses = responses.filter(r => r.questionId === activeQuestion.id);
+                let correctCount = 0;
+                let incorrectCount = 0;
+                answeredResponses.forEach(resp => {
+                  let isCorrect = false;
+                  if (activeQuestion.type === QuestionType.SHORT_ANSWER) {
+                    const manualGraded = manualGrades[`${activeQuestion.id}_${resp.studentName}`];
+                    if (manualGraded) isCorrect = true;
+                    else if (activeQuestion.correctAnswer) {
+                      isCorrect = String(resp.answer || '').trim().toLowerCase() === String(activeQuestion.correctAnswer).trim().toLowerCase();
+                    }
+                  } else {
+                    isCorrect = JSON.stringify(resp.answer) === JSON.stringify(activeQuestion.correctAnswer);
+                  }
+                  if (isCorrect) correctCount++; else incorrectCount++;
+                });
+                return (
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    <div className="bg-green-500/20 border border-green-500/30 rounded-xl p-3 text-center">
+                      <span className="block text-xl font-black text-green-400">{correctCount}</span>
+                      <span className="text-[9px] font-black text-green-500 uppercase">Đúng</span>
+                    </div>
+                    <div className="bg-red-500/20 border border-red-500/30 rounded-xl p-3 text-center">
+                      <span className="block text-xl font-black text-red-400">{incorrectCount}</span>
+                      <span className="text-[9px] font-black text-red-500 uppercase">Sai</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
                 {joinedStudents.map((student, idx) => {
                   const response = responses.find(r => r.questionId === activeQuestion?.id && r.studentName === student.name);
@@ -1164,6 +1242,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                     ? 'bg-indigo-500/10 border-indigo-500/30'
                     : 'bg-white/5 border-white/5 opacity-40';
                   let nameStyle = hasAnswered ? 'text-white' : 'text-slate-500';
+                  let statusLabel = '';
 
                   if (isAnswerRevealed && hasAnswered && activeQuestion) {
                     let isCorrect = false;
@@ -1182,6 +1261,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                       ? 'bg-green-500/20 border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.2)]'
                       : 'bg-red-500/20 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]';
                     nameStyle = isCorrect ? 'text-green-400' : 'text-red-400';
+                    statusLabel = isCorrect ? '✓ ĐÚNG' : '✗ SAI';
                   }
 
                   return (
@@ -1192,7 +1272,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                       </div>
                       {hasAnswered && (
                         isAnswerRevealed ? (
-                          <span className={`text-[9px] font-black shrink-0 ${nameStyle}`}>{containerStyle.includes('green') ? 'ĐÚNG' : 'SAI'}</span>
+                          <span className={`text-[9px] font-black shrink-0 ${nameStyle}`}>{statusLabel}</span>
                         ) : <LucideCheckCircle2 className="w-3 h-3 text-indigo-500 shrink-0" />
                       )}
                     </div>
@@ -1818,7 +1898,19 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                   <div className="flex items-center gap-0.5 bg-white/5 rounded-xl px-1.5 h-9 border border-white/10">
                     <button
                       disabled={activeQuestionIndex === 0}
-                      onClick={() => { setActiveQuestionIndex(prev => prev - 1); setShowStats(false); setIsAnswerRevealed(false); }}
+                      onClick={() => {
+                        // Close current question if active
+                        if (isQuestionActive) {
+                          setIsQuestionActive(false);
+                          stopTimer();
+                          socket.emit('question:state', { isActive: false, questionId: null });
+                          dataService.updateSession(session.id, { activeQuestionId: null });
+                        }
+                        setActiveQuestionIndex(prev => prev - 1);
+                        setShowStats(false);
+                        setIsAnswerRevealed(false);
+                        setQuestionStartTime(null);
+                      }}
                       className="p-1 text-white hover:bg-white/10 rounded-lg disabled:opacity-30 transition-all"
                     >
                       <LucideChevronLeft className="w-3.5 h-3.5" />
@@ -1828,7 +1920,19 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                     </span>
                     <button
                       disabled={activeQuestionIndex === totalQuestions - 1}
-                      onClick={() => { setActiveQuestionIndex(prev => prev + 1); setShowStats(false); setIsAnswerRevealed(false); }}
+                      onClick={() => {
+                        // Close current question if active
+                        if (isQuestionActive) {
+                          setIsQuestionActive(false);
+                          stopTimer();
+                          socket.emit('question:state', { isActive: false, questionId: null });
+                          dataService.updateSession(session.id, { activeQuestionId: null });
+                        }
+                        setActiveQuestionIndex(prev => prev + 1);
+                        setShowStats(false);
+                        setIsAnswerRevealed(false);
+                        setQuestionStartTime(null);
+                      }}
                       className="p-1 text-white hover:bg-white/10 rounded-lg disabled:opacity-30 transition-all"
                     >
                       <LucideChevronRight className="w-3.5 h-3.5" />
@@ -1842,6 +1946,15 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                   >
                     {isQuestionActive ? <LucideStopCircle className="w-4 h-4" /> : <LucidePlayCircle className="w-4 h-4" />}
                     <span>{isQuestionActive ? 'KẾT THÚC' : 'BẮT ĐẦU'}</span>
+                  </button>
+                )}
+                {activeQuestion && !isQuestionActive && !isAnswerRevealed && (
+                  <button
+                    onClick={revealAnswer}
+                    className="flex items-center gap-1.5 h-9 px-4 rounded-xl font-black text-xs transition-all shadow-lg bg-amber-500 text-white hover:bg-amber-600 animate-pulse"
+                  >
+                    <LucideCheckCircle2 className="w-4 h-4" />
+                    <span>HIỆN ĐÁP ÁN</span>
                   </button>
                 )}
               </div>
