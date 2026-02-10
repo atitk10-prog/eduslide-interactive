@@ -130,20 +130,31 @@ const App: React.FC = () => {
 
   const startPresentation = async (session: Session) => {
     try {
-      // 1. Clone session to create a fresh learning instance with new room code
-      const freshSession = await dataService.cloneSession(session.id);
-      if (!freshSession) {
-        toast.error("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
-        return;
+      let presentSession: Session;
+
+      if (session.isActive) {
+        // Session is already active — open it directly, no clone needed
+        presentSession = session;
+      } else {
+        // Session is inactive (from history) — clone it for a fresh instance
+        const freshSession = await dataService.cloneSession(session.id);
+        if (!freshSession) {
+          toast.error("Không thể khởi động trình chiếu. Vui lòng kiểm tra lại kết nối.");
+          return;
+        }
+        presentSession = freshSession;
+        // Refresh sessions list to show new clone
+        const updated = await dataService.getSessions();
+        if (updated) setSessions(updated);
       }
 
-      // 2. Set the NEW session and view
-      setCurrentSession(freshSession);
+      // Set the session and switch to presentation view
+      setCurrentSession(presentSession);
       setView('PRESENTATION');
 
-      // 3. Save to localStorage for recovery
+      // Save to localStorage for recovery
       localStorage.setItem('eduslide_active_presentation', JSON.stringify({
-        sessionId: freshSession.id,
+        sessionId: presentSession.id,
         timestamp: Date.now()
       }));
     } catch (error) {
