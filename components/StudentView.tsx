@@ -1480,54 +1480,7 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
           </div>
         )}
 
-        {/* Quick Poll Overlay */}
-        {quickPoll && !isQuestionActive && (
-          <div className="absolute inset-0 z-[55] bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-300">
-            <div className="absolute top-0 left-0 w-full h-full bg-black/20" />
-            <div className="relative z-10 w-full max-w-sm flex flex-col items-center gap-8">
-              <div className="text-center">
-                <div className="bg-white/20 backdrop-blur-sm px-4 py-1.5 rounded-full text-[10px] font-black text-white uppercase tracking-widest mb-4 inline-flex items-center gap-2">
-                  <LucideBarChart3 className="w-3 h-3" /> BÌNH CHỌN NHANH
-                </div>
-                <h2 className="text-2xl sm:text-3xl font-black text-white drop-shadow-lg">{quickPoll.prompt}</h2>
-              </div>
-              <div className="w-full grid grid-cols-2 gap-3">
-                {quickPoll.options.map((opt: string, idx: number) => {
-                  const isSelected = pollSelectedOption === opt;
-                  const colors = ['bg-blue-500', 'bg-green-500', 'bg-amber-500', 'bg-red-500', 'bg-purple-500'];
-                  return (
-                    <button
-                      key={idx}
-                      onClick={async () => {
-                        if (pollSelectedOption) return; // Already voted
-                        setPollSelectedOption(opt);
-                        socket.emit('poll:response', { studentName: user.name, option: opt });
-                        if (quickPoll.id) {
-                          await dataService.submitPollResponse(quickPoll.id, user.name, opt);
-                        }
-                      }}
-                      disabled={!!pollSelectedOption}
-                      className={`p-6 rounded-2xl font-black text-white text-lg transition-all border-2 ${isSelected
-                        ? 'border-white scale-105 shadow-2xl ring-4 ring-white/30'
-                        : pollSelectedOption
-                          ? 'border-white/10 opacity-40'
-                          : `border-white/20 hover:border-white hover:scale-105 active:scale-95`
-                        } ${colors[idx % colors.length]}`}
-                    >
-                      {opt}
-                      {isSelected && <LucideCheck className="w-5 h-5 mx-auto mt-2" />}
-                    </button>
-                  );
-                })}
-              </div>
-              {pollSelectedOption && (
-                <div className="bg-white/20 backdrop-blur-sm px-6 py-3 rounded-2xl">
-                  <p className="text-white font-black text-sm">Đã chọn: {pollSelectedOption} ✓</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+
 
         {/* Focus Mode Warning Overlay */}
         {isFocusMode && focusWarningCountdown !== null && (

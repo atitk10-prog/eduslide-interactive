@@ -165,10 +165,6 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
 
   // Calculate stats for charts
   const statsData = useMemo(() => {
-    // Determine active question
-    const activeSlide = session.slides[currentSlideIndex];
-    const activeQuestion = activeSlide?.questions.find(q => session.activeQuestionId === q.id) || activeSlide?.questions[0];
-
     if (!activeQuestion) return { pie: [], bar: [] };
 
     // Filter responses for this question
@@ -196,7 +192,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
     }));
 
     return { pie, bar };
-  }, [responses, session, currentSlideIndex]);
+  }, [responses, session, currentSlideIndex, activeQuestionIndex]);
 
   const exportToCSV = () => {
     const leaderboard = calculateLeaderboard('CUMULATIVE');
@@ -277,7 +273,6 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
           prompt: activeQuestion.prompt,
           type: activeQuestion.type,
           options: activeQuestion.options,
-          correctAnswer: activeQuestion.correctAnswer,
           duration: activeQuestion.duration
         }
       });
@@ -410,6 +405,12 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
       setActiveQuestionIndex(0);
       setIsQuestionActive(false);
       stopTimer();
+      // Clear drawing canvas when changing slides
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      socket.emit('draw:clear', {});
       socket.emit('slide:change', { slideIndex: newIndex });
       socket.emit('question:state', { isActive: false, questionId: null });
       dataService.updateSession(session.id, { currentSlideIndex: newIndex, activeQuestionId: null });
@@ -1386,106 +1387,7 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </>
           )}
 
-          {/* Stats Overlay */}
-          {showStats && (
-            <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-30 p-10 flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-300">
-              <button onClick={() => setShowStats(false)} className="absolute top-10 right-10 p-3 bg-slate-100 rounded-full hover:bg-slate-200 transition-all">
-                <LucideX className="w-6 h-6" />
-              </button>
 
-              <div className="absolute top-10 left-10 flex items-center gap-3">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tự động hiện BXH</label>
-                <button
-                  onClick={() => setAutoShowLeaderboard(!autoShowLeaderboard)}
-                  className={`w-12 h-6 rounded-full transition-all relative ${autoShowLeaderboard ? 'bg-indigo-600' : 'bg-slate-200'}`}
-                >
-                  <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${autoShowLeaderboard ? 'right-1' : 'left-1'}`} />
-                </button>
-              </div>
-
-              <h2 className="text-3xl font-black mb-8 flex items-center gap-3">
-                <LucideChartBar className="w-8 h-8 text-indigo-600" /> THỐNG KÊ KẾT QUẢ
-              </h2>
-
-              <div className="w-full max-w-4xl h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={statsData.bar}>
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontWeight: 'bold' }} />
-                    <Tooltip cursor={{ fill: '#f1f5f9' }} contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                    <Bar dataKey="count" radius={[10, 10, 0, 0]}>
-                      {statsData.bar.map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={isAnswerRevealed ? (entry.isCorrect ? '#10b981' : '#ef4444') : '#6366f1'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              {activeQuestion?.type === QuestionType.SHORT_ANSWER && (
-                <div className="w-full max-w-3xl mt-6">
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Câu trả lời từ học sinh (Nhấn để cộng điểm)</h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {responses.filter(r => r.questionId === activeQuestion.id).map((resp, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleManualGrade(resp.studentName, activeQuestion.id)}
-                        className={`p-4 rounded-2xl border-2 text-left transition-all relative overflow-hidden group ${manualGrades[`${activeQuestion.id}_${resp.studentName}`] ? 'bg-green-50 border-green-500 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-600 hover:border-indigo-200'}`}
-                      >
-                        <p className="text-[10px] font-black text-slate-400 uppercase mb-1">{resp.studentName}</p>
-                        <p className="font-bold text-sm">{resp.answer}</p>
-                        {manualGrades[`${activeQuestion.id}_${resp.studentName}`] && (
-                          <LucideCheckCircle2 className="absolute top-2 right-2 w-4 h-4 text-green-500" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-10 grid grid-cols-3 gap-6 w-full max-w-3xl">
-                <div className="bg-indigo-50 p-6 rounded-3xl text-center">
-                  <span className="block text-4xl font-black text-indigo-600">{responses.length}</span>
-                  <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Phản hồi</span>
-                </div>
-                <div className="bg-green-50 p-6 rounded-3xl text-center">
-                  <span className="block text-4xl font-black">
-                    {responses.filter(resp => {
-                      const q = session.slides.flatMap(s => s.questions).find(q => q.id === resp.questionId);
-                      return JSON.stringify(resp.answer) === JSON.stringify(q?.correctAnswer);
-                    }).length}
-                  </span>
-                  <span className="text-xs font-bold text-green-400 uppercase tracking-widest">Đúng</span>
-                </div>
-                {!isAnswerRevealed ? (
-                  <button
-                    onClick={revealAnswer}
-                    className="bg-green-600 text-white p-6 rounded-3xl text-center hover:scale-105 transition-transform shadow-xl border-4 border-white/20"
-                  >
-                    <LucideCheckCircle2 className="w-8 h-8 mx-auto mb-1" />
-                    <span className="text-xs font-black uppercase tracking-widest">HIỆN ĐÁP ÁN</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setShowLeaderboard(true)}
-                    className="bg-slate-900 text-white p-6 rounded-3xl text-center hover:scale-105 transition-transform"
-                  >
-                    <LucideTrophy className="w-8 h-8 mx-auto mb-1 text-yellow-400" />
-                    <span className="text-xs font-bold uppercase tracking-widest">Bảng xếp hạng</span>
-                  </button>
-                )}
-              </div>
-              <button
-                onClick={() => {
-                  setShowFinalReport(true);
-                  socket.emit('session:end', { leaderboard: calculateLeaderboard() });
-                  dataService.updateSession(session.id, { isActive: false });
-                }}
-                className="mt-8 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black hover:bg-slate-800 transition-all flex items-center gap-2"
-              >
-                <LucideFlag className="w-5 h-5" /> KẾT THÚC BUỔI HỌC
-              </button>
-            </div>
-          )}
 
           {/* Stats Modal */}
           {showStats && (

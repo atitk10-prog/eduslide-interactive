@@ -11,11 +11,12 @@ export const dataService = {
             return saved ? JSON.parse(saved) : [];
         }
 
-        const { data: { session: authSession } } = await supabase.auth.getSession();
+        let { data: { session: authSession } } = await supabase.auth.getSession();
         if (!authSession) {
             // Try refreshing the session first
             const { data: refreshData } = await supabase.auth.refreshSession();
             if (!refreshData.session) return [];
+            authSession = refreshData.session;
         }
 
         let query = supabase
@@ -204,8 +205,12 @@ export const dataService = {
 
     async updateSlide(slideId: string, data: Partial<Slide>): Promise<boolean> {
         if (isMock) {
-            // Mock logic omitted for brevity as we focus on real mode, 
-            // but normally we'd update localStorage.
+            const sessions = await this.getSessions();
+            const updated = sessions.map(s => ({
+                ...s,
+                slides: s.slides.map(sl => sl.id === slideId ? { ...sl, ...data } : sl)
+            }));
+            localStorage.setItem('eduslide_sessions', JSON.stringify(updated));
             return true;
         }
 
@@ -304,7 +309,22 @@ export const dataService = {
     },
 
     async cloneSession(sessionId: string): Promise<Session | null> {
-        if (isMock) return null;
+        if (isMock) {
+            const original = await this.getSessionById(sessionId);
+            if (!original) return null;
+            const newSession: Session = {
+                ...original,
+                id: crypto.randomUUID(),
+                roomCode: Math.random().toString(36).substr(2, 4).toUpperCase(),
+                title: `${original.title} - ${new Date().toLocaleDateString('vi-VN')}`,
+                currentSlideIndex: 0,
+                isActive: true,
+                responses: [],
+                createdAt: new Date().toISOString()
+            };
+            await this.createSession(newSession, original.slides);
+            return newSession;
+        }
 
         // 1. Get original session and slides
         const original = await this.getSessionById(sessionId);
