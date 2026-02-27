@@ -3,6 +3,17 @@ import { Session, AnswerResponse, Slide } from '../types';
 
 const isMock = !import.meta.env.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL.includes('placeholder');
 
+// Centralized token refresh helper — ensures valid auth for ALL API calls
+// Without this, Supabase JWT expires after ~1h and ALL buttons stop working
+async function getValidSession() {
+    let { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+        const { data } = await supabase.auth.refreshSession();
+        session = data.session;
+    }
+    return session;
+}
+
 export const dataService = {
     // --- Sessions ---
     async getSessions(isAdmin = false): Promise<Session[]> {
@@ -11,13 +22,8 @@ export const dataService = {
             return saved ? JSON.parse(saved) : [];
         }
 
-        let { data: { session: authSession } } = await supabase.auth.getSession();
-        if (!authSession) {
-            // Try refreshing the session first
-            const { data: refreshData } = await supabase.auth.refreshSession();
-            if (!refreshData.session) return [];
-            authSession = refreshData.session;
-        }
+        const authSession = await getValidSession();
+        if (!authSession) return [];
 
         let query = supabase
             .from('edu_sessions')
@@ -123,8 +129,8 @@ export const dataService = {
             return true;
         }
 
-        // 1. Get current user
-        const { data: { session: authSession } } = await supabase.auth.getSession();
+        // 1. Get current user (with token refresh)
+        const authSession = await getValidSession();
         if (!authSession) {
             console.error('No auth session found');
             return false;
