@@ -65,8 +65,9 @@ export const dataService = {
                 imageUrl: sl.image_url,
                 pdfSource: sl.pdf_source,
                 pdfPage: sl.pdf_page,
-                questions: sl.questions || []
-            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title)),
+                questions: sl.questions || [],
+                order_index: sl.order_index ?? 0
+            })).sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0)),
             responses: []
         }));
     },

@@ -210,7 +210,8 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
                 title: `Slide ${i + 1}`,
                 content: '',
                 imageUrl: publicUrl,
-                questions: []
+                questions: [],
+                order_index: i
               };
               totalSize += compressedFile.size;
             }

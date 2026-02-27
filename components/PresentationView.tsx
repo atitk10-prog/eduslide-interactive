@@ -350,21 +350,20 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         const ctx = canvas.getContext('2d');
 
         if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
-          // Cap resolution to 800px wide to keep base64 payload under ~200KB
-          // (Supabase Realtime drops payloads > ~256KB)
+          // Cap resolution to 1280px wide for good readability
           const nativeW = vid.videoWidth || 1920;
           const nativeH = vid.videoHeight || 1080;
-          const maxW = 800;
+          const maxW = 1280;
           const scale = Math.min(maxW / nativeW, 1);
           canvas.width = Math.round(nativeW * scale);
           canvas.height = Math.round(nativeH * scale);
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
-          // Balanced quality JPEG — readable text while fitting payload limits
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+          // High quality JPEG — clear and readable
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
           socket.emit('screen:frame', { image: dataUrl });
         }
-      }, 300); // ~3 FPS — keeps bandwidth manageable for Supabase Realtime
+      }, 200); // ~5 FPS — smooth and readable
 
       stream.getVideoTracks()[0].onended = () => {
         stopScreenShare();
