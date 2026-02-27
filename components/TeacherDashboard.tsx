@@ -173,7 +173,8 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ sessions, onStart, 
           setUploadProgress(100);
         }
       } else {
-        const imageFiles = files.filter(f => f.type.startsWith('image/'));
+        const imageFiles = files.filter(f => f.type.startsWith('image/'))
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
         if (imageFiles.length === 0) return;
 
         // Check if any file is too large (> 10MB)

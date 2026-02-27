@@ -195,10 +195,23 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       const saved = localStorage.getItem('eduslide_student_session');
       if (saved) {
         try {
-          const { roomCode: savedRoom, timestamp } = JSON.parse(saved);
+          const { roomCode: savedRoom, studentCode: savedCode, timestamp } = JSON.parse(saved);
           // Verify if session is still valid (e.g., within 24 hours)
           if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
             setRoomCode(savedRoom);
+            // Re-resolve student name from saved code to avoid stale cache
+            let displayName = user.name;
+            let displayClass = 'N/A';
+            if (savedCode) {
+              const found = await dataService.getStudentByCode(savedCode);
+              if (found) {
+                displayName = found.full_name;
+                displayClass = found.class_name;
+                user.name = displayName;
+                localStorage.setItem('eduslide_user', JSON.stringify(user));
+              }
+              setStudentCode(savedCode);
+            }
             // Attempt silent join
             const session = await dataService.getSessionByRoomCode(savedRoom);
             if (session && session.isActive) {
@@ -209,9 +222,9 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
 
               setIsJoined(true);
               socket.joinRoom(savedRoom);
-              socket.trackPresence({ name: user.name, class: 'N/A' }); // Class might be missing in restore, can be improved
-              socket.emit('session:join', { roomCode: savedRoom, userName: user.name });
-              console.log("Auto-rejoined session:", savedRoom);
+              socket.trackPresence({ name: displayName, class: displayClass });
+              socket.emit('session:join', { roomCode: savedRoom, userName: displayName });
+              console.log("Auto-rejoined session:", savedRoom, "as", displayName);
             }
           }
         } catch (e) {
@@ -463,6 +476,19 @@ const StudentView: React.FC<StudentViewProps> = ({ user }) => {
       if (data.enabled) {
         setAlertMessage("CHẾ ĐỘ TẬP TRUNG: ĐÃ KÍCH HOẠT");
         setTimeout(() => setAlertMessage(null), 3000);
+        // Auto-request fullscreen when focus mode is enabled
+        const el = document.documentElement;
+        const reqFS = el.requestFullscreen
+          || (el as any).webkitRequestFullscreen
+          || (el as any).mozRequestFullScreen
+          || (el as any).msRequestFullscreen;
+        if (reqFS && !document.fullscreenElement) {
+          reqFS.call(el).then(() => {
+            setIsCurrentlyFullscreen(true);
+          }).catch((err: any) => {
+            console.warn('Auto-fullscreen failed (requires user gesture):', err);
+          });
+        }
       } else {
         setAlertMessage("CHẾ ĐỘ TẬP TRUNG: ĐÃ TẮT");
         setTimeout(() => setAlertMessage(null), 3000);

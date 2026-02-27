@@ -350,19 +350,21 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
         const ctx = canvas.getContext('2d');
 
         if (vid.readyState === vid.HAVE_ENOUGH_DATA && ctx) {
-          // Use native video resolution (capped at 1920x1080) to avoid blurry upscaling
+          // Cap resolution to 800px wide to keep base64 payload under ~200KB
+          // (Supabase Realtime drops payloads > ~256KB)
           const nativeW = vid.videoWidth || 1920;
           const nativeH = vid.videoHeight || 1080;
-          const scale = Math.min(1920 / nativeW, 1080 / nativeH, 1);
+          const maxW = 800;
+          const scale = Math.min(maxW / nativeW, 1);
           canvas.width = Math.round(nativeW * scale);
           canvas.height = Math.round(nativeH * scale);
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
-          // High quality JPEG for readable screen content
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          // Balanced quality JPEG — readable text while fitting payload limits
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
           socket.emit('screen:frame', { image: dataUrl });
         }
-      }, 150); // ~7 FPS — smoother viewing
+      }, 300); // ~3 FPS — keeps bandwidth manageable for Supabase Realtime
 
       stream.getVideoTracks()[0].onended = () => {
         stopScreenShare();
@@ -1354,8 +1356,8 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                   </div>
                   <h3 className="text-3xl font-black text-white leading-tight mb-6">{activeQuestion?.prompt}</h3>
 
-                  {/* Options Preview for Teacher */}
-                  {activeQuestion?.type !== QuestionType.SHORT_ANSWER && (
+                  {/* Options Preview for Teacher — MCQ and TRUE_FALSE */}
+                  {(activeQuestion?.type === QuestionType.MULTIPLE_CHOICE || activeQuestion?.type === QuestionType.TRUE_FALSE) && (
                     <div className="grid grid-cols-2 gap-3 mt-4">
                       {activeQuestion?.options?.map((opt, i) => {
                         const isCorrect = activeQuestion.correctAnswer === opt;
@@ -1367,6 +1369,28 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
                               <span className="text-sm font-bold">{opt}</span>
                             </div>
                             {showAsCorrect && <LucideCheckCircle2 className="w-4 h-4 animate-in zoom-in" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Options Preview for Teacher — TRUE_FALSE_4 (4 statements with Đúng/Sai) */}
+                  {activeQuestion?.type === QuestionType.TRUE_FALSE_4 && (
+                    <div className="space-y-2 mt-4">
+                      {activeQuestion?.options?.map((statement, idx) => {
+                        const correctVal = activeQuestion.correctAnswer?.[idx];
+                        const showCorrect = showTeacherHint || isAnswerRevealed;
+                        const isTrue = correctVal === 'Đúng' || correctVal === true;
+                        return (
+                          <div key={idx} className={`p-3 rounded-xl border-2 flex items-center gap-3 transition-all duration-300 ${showCorrect ? (isTrue ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30') : 'bg-white/5 border-white/10'}`}>
+                            <span className="w-6 h-6 rounded-lg bg-black/30 flex items-center justify-center text-[10px] font-black text-white shrink-0">{idx + 1}</span>
+                            <span className="text-sm font-bold text-slate-300 flex-1">{statement}</span>
+                            {showCorrect && (
+                              <span className={`text-xs font-black px-2 py-1 rounded-lg ${isTrue ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                {correctVal === true ? 'Đúng' : correctVal === false ? 'Sai' : String(correctVal)}
+                              </span>
+                            )}
                           </div>
                         );
                       })}
@@ -1979,8 +2003,12 @@ const PresentationView: React.FC<PresentationViewProps> = ({ session: initialSes
             </button>
             <button onClick={() => setShowSettingsModal(true)} className="p-2 bg-white/5 text-white rounded-xl hover:bg-white/10 transition-all" title="Cài đặt"><LucideSettings className="w-4 h-4" /></button>
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (!window.confirm('Bạn có chắc chắn muốn KẾT THÚC buổi học? Hành động này sẽ thông báo cho tất cả học sinh.')) return;
+                // Stop screen share if active
+                stopScreenShare();
+                // Deactivate session in DB first (ignore errors — always exit)
+                try { await dataService.updateSession(session.id, { isActive: false }); } catch (e) { console.error('Failed to deactivate:', e); }
                 socket.emit('session:end', { leaderboard: calculateLeaderboard() });
                 onExit();
               }}
